@@ -4,7 +4,10 @@
       <div>
         <p class="section-label">系统设置</p>
         <h2 class="page-title">Logo 配置</h2>
-        <p class="page-desc">上传自定义 Logo 后会替换 PC 和 PDA 左上角的默认图标。支持 PNG、JPG、WebP，最大 2MB。</p>
+        <p class="page-desc">
+          {{ auth.allDepartments ? '当前正在维护登录页使用的平台默认 Logo。' : `当前维护“${auth.currentDepartment?.name || '本部门'}”的登录后 Logo。` }}
+          支持 PNG、JPG、WebP，最大 2MB。
+        </p>
       </div>
     </div>
 
@@ -16,7 +19,7 @@
         </div>
         <div class="logo-meta">
           <strong>{{ logoDataUrl ? '当前自定义 Logo' : '当前使用默认 Logo' }}</strong>
-          <small>显示在 PC 端左侧栏和登录页左上角</small>
+          <small>{{ auth.allDepartments ? '显示在登录页左上角' : '显示在本部门 PC 与 PDA 登录后的页面' }}</small>
         </div>
       </div>
 
@@ -50,7 +53,9 @@ import { onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
 import { api } from '@/api'
+import { useAuthStore } from '@/stores/auth'
 
+const auth = useAuthStore()
 const logoDataUrl = ref('')
 const original = ref('')
 const dirty = ref(false)
@@ -59,7 +64,7 @@ const uploadRef = ref<any>()
 
 async function loadLogo() {
   try {
-    const { data } = await api.get('/settings/brand')
+    const { data } = await api.get('/admin/settings/brand')
     logoDataUrl.value = data.logoDataUrl || ''
     original.value = logoDataUrl.value
   } catch (error: any) {
@@ -105,6 +110,7 @@ async function saveLogo() {
     original.value = logoDataUrl.value
     dirty.value = false
     uploadRef.value?.clearFiles()
+    await auth.fetchMe()
     ElMessage.success('Logo 已保存')
   } catch (error: any) {
     ElMessage.error(error.message || '保存 Logo 失败')
@@ -121,6 +127,7 @@ async function resetLogo() {
     original.value = ''
     dirty.value = false
     uploadRef.value?.clearFiles()
+    await auth.fetchMe()
     ElMessage.success('已恢复默认 Logo')
   } catch (error: any) {
     ElMessage.error(error.message || '恢复默认 Logo 失败')

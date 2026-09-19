@@ -39,6 +39,7 @@
           <p>系统</p>
           <el-menu :default-active="$route.path" router>
             <el-menu-item v-if="auth.can('user.manage')" index="/users"><el-icon><User /></el-icon><span>用户与权限</span></el-menu-item>
+            <el-menu-item v-if="auth.can('department.manage')" index="/departments"><el-icon><OfficeBuilding /></el-icon><span>部门维护</span></el-menu-item>
             <el-menu-item v-if="auth.can('backup.manage')" index="/backups"><el-icon><Download /></el-icon><span>数据库备份</span></el-menu-item>
             <el-menu-item v-if="auth.can('system.manage')" index="/settings"><el-icon><Picture /></el-icon><span>Logo 设置</span></el-menu-item>
           </el-menu>
@@ -58,7 +59,17 @@
           <h1>{{ pageTitle }}</h1>
         </div>
         <div class="account-block">
-          <div class="account-copy"><strong>{{ auth.user?.name }}</strong><span>{{ auth.user?.role.name }}</span></div>
+          <el-select
+            v-if="auth.isSuperAdmin"
+            class="department-switch"
+            :model-value="auth.selectedDepartmentId"
+            @change="changeDepartment"
+          >
+            <el-option label="全部部门" :value="0" />
+            <el-option v-for="department in auth.departments" :key="department.id" :label="department.enabled ? department.name : `${department.name}（已停用）`" :value="department.id" />
+          </el-select>
+          <div v-else class="department-label">{{ auth.currentDepartment?.name || '未分配部门' }}</div>
+          <div class="account-copy"><strong>{{ auth.user?.name }}</strong><span>{{ auth.user?.role.name }} · {{ auth.currentDepartment?.name || '全局' }}</span></div>
           <div class="account-avatar">{{ auth.user?.name?.slice(0, 1) }}</div>
           <el-button text :icon="SwitchButton" @click="logout">退出</el-button>
         </div>
@@ -70,25 +81,21 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Calendar, Clock, Connection, DataBoard, Document, Download, EditPen, CircleCloseFilled, Goods, Picture, Share, SwitchButton, User } from '@element-plus/icons-vue'
+import { Calendar, Clock, Connection, DataBoard, Document, Download, EditPen, CircleCloseFilled, Goods, OfficeBuilding, Picture, Share, SwitchButton, User } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
-import { api } from '@/api'
 import CopyrightFooter from '@/components/CopyrightFooter.vue'
 
 const auth = useAuthStore()
-const brandLogo = ref('')
+const brandLogo = computed(() => auth.brandLogoDataUrl)
 const route = useRoute()
 const router = useRouter()
-const pageTitle = computed(() => ({ '/': '工作台', '/users': '用户与权限', '/lines': '产线配置', '/shifts': '班次配置', '/products': '产品维护', '/forms': '任务与表单', '/logs': '日志与导出', '/backups': '数据库备份', '/void-reasons': '废除原因', '/settings': 'Logo 设置' }[route.path] || '工作台'))
+const pageTitle = computed(() => ({ '/': '工作台', '/users': '用户与权限', '/departments': '部门维护', '/lines': '产线配置', '/shifts': '班次配置', '/products': '产品维护', '/forms': '任务与表单', '/logs': '日志与导出', '/backups': '数据库备份', '/void-reasons': '废除原因', '/settings': 'Logo 设置' }[route.path] || '工作台'))
 const showConfig = computed(() => auth.can('line.manage') || auth.can('shift.manage') || auth.can('form.view') || auth.can('product.manage') || auth.can('system.manage') || auth.can('log.view'))
-const showSystem = computed(() => auth.can('user.manage') || auth.can('backup.manage') || auth.can('system.manage'))
-async function loadBrand() {
-  try { const { data } = await api.get('/settings/brand'); brandLogo.value = data.logoDataUrl || '' } catch {}
-}
+const showSystem = computed(() => auth.can('user.manage') || auth.can('department.manage') || auth.can('backup.manage') || auth.can('system.manage'))
+async function changeDepartment(value: number | string) { await auth.selectDepartment(Number(value)); window.location.reload() }
 async function logout() { await auth.logout(); router.push('/login') }
-onMounted(loadBrand)
 </script>
 
 <style scoped>
@@ -120,6 +127,8 @@ onMounted(loadBrand)
 .breadcrumb { margin: 0 0 5px; color: var(--bench-ink-soft); font-size: 11px; letter-spacing: .08em; }
 .topbar h1 { margin: 0; font-size: 24px; letter-spacing: -.02em; }
 .account-block { display: flex; align-items: center; gap: 10px; }
+.department-switch { width: 180px; }
+.department-label { max-width: 180px; overflow: hidden; color: var(--bench-steel); font-size: 12px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
 .account-copy { text-align: right; }
 .account-copy strong, .account-copy span { display: block; }
 .account-copy strong { font-size: 13px; }

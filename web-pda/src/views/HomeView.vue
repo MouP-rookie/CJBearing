@@ -61,7 +61,7 @@ import { useAuthStore } from '@/stores/auth'
 const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
-const brandLogo = ref('')
+const brandLogo = computed(() => auth.brandLogoDataUrl)
 const lines = ref<any[]>([])
 const forms = ref<any[]>([])
 const lineId = ref<number>()
@@ -69,9 +69,6 @@ const showLineSheet = ref(false)
 const switchingLineId = ref<number | null>(null)
 const online = ref(navigator.onLine)
 const selectedLineName = computed(() => lines.value.find(item => item.id === lineId.value)?.name || '请选择产线')
-async function loadBrand() {
-  try { const { data } = await api.get('/settings/brand'); brandLogo.value = data.logoDataUrl || '' } catch {}
-}
 function kindName(kind: string) { return { first_inspection: '首检', final_inspection: '末检', report: '报表', registration: '登记表' }[kind] || kind }
 async function loadLines() {
   const { data } = await api.get('/execution/lines')
@@ -104,7 +101,7 @@ function openForm(form: any) { router.push({ path: `/form/${form.versionId}`, qu
 async function logout() { try { await showConfirmDialog({ title: '退出登录', message: '确定要退出当前账号吗？' }); await auth.logout(); router.replace('/login') } catch {} }
 
 function updateOnline() { online.value = navigator.onLine }
-onMounted(() => { window.addEventListener('online', updateOnline); window.addEventListener('offline', updateOnline); loadBrand(); loadLines() })
+onMounted(() => { window.addEventListener('online', updateOnline); window.addEventListener('offline', updateOnline); loadLines() })
 onUnmounted(() => { window.removeEventListener('online', updateOnline); window.removeEventListener('offline', updateOnline) })
 </script>
 

@@ -1,28 +1,30 @@
 <template>
   <div class="page assignment-page">
-    <div class="page-head"><div><p class="section-label">表单分发</p><h2 class="page-title">任务与报表分配</h2><p class="page-desc">把已发布的表单版本分配到产线。分配父产线时，其全部子产线会自动使用同一版本；共享模板可以为不同产线指定不同版本。</p></div><el-button type="primary" size="large" :disabled="!selectedTemplate || !publishedVersions.length" :loading="saving" @click="save">保存分配</el-button></div>
+    <div class="page-head"><div><p class="section-label">表单分发</p><h2 class="page-title">任务与报表分配</h2><p class="page-desc">把已发布的表单版本分配到产线。分配父产线时，其全部子产线会自动使用同一版本；共享模板可以为不同产线指定不同版本。</p></div><el-button type="primary" size="large" :disabled="auth.allDepartments || !selectedTemplate || !publishedVersions.length" :loading="saving" @click="save">保存分配</el-button></div>
 
     <div class="assignment-grid">
       <aside class="panel template-panel">
         <div class="panel-heading"><span>01</span><div><strong>选择模板</strong><small>首末检、报表和登记表都在这里分配</small></div></div>
-        <el-segmented v-model="kind" :options="kindOptions" @change="loadTemplates" />
+        <el-segmented v-model="kind" :options="kindOptions" @change="changeKind" />
         <div class="template-list"><button v-for="template in templates" :key="template.id" class="template-item" :class="{ active: selectedTemplate?.id === template.id }" @click="selectTemplate(template)"><span class="template-kind">{{ kindName(template.kind) }}</span><span><strong>{{ template.name }}</strong><small>{{ template.code }}</small></span><el-icon><ArrowRight /></el-icon></button></div>
+        <AppPagination v-model:page="templatePage" v-model:size="templateSize" :total="templateTotal" :page-sizes="[10, 20, 50]" @change="loadTemplates" />
       </aside>
 
       <main class="panel line-panel">
         <template v-if="selectedTemplate">
-          <div class="assignment-header"><div><span class="kind-badge">{{ kindName(selectedTemplate.kind) }}</span><h3>{{ selectedTemplate.name }}</h3><p>选择每条产线使用的已发布版本</p></div><el-button plain :disabled="!publishedVersions.length" @click="assignLatest">全部使用最新版本</el-button></div>
+          <div class="assignment-header"><div><span class="kind-badge">{{ kindName(selectedTemplate.kind) }}</span><h3>{{ selectedTemplate.name }}</h3><p>选择每条产线使用的已发布版本</p></div><el-button plain :disabled="auth.allDepartments || !publishedVersions.length" @click="assignLatest">全部使用最新版本</el-button></div>
           <div v-if="!publishedVersions.length" class="publish-hint">
             <span v-if="latestDraft">该模板目前只有草稿版本 v{{ latestDraft.versionNo }}，发布后才能分配到产线。</span>
             <span v-else>该模板还没有任何版本，请先到「任务与表单」新建并编辑模板。</span>
-            <el-button v-if="latestDraft" size="small" type="warning" :loading="publishing" @click="publishLatestDraft">发布草稿 v{{ latestDraft.versionNo }}</el-button>
+            <el-button v-if="latestDraft" size="small" type="warning" :disabled="auth.allDepartments" :loading="publishing" @click="publishLatestDraft">发布草稿 v{{ latestDraft.versionNo }}</el-button>
           </div>
-          <el-table :data="lineRows" border>
+          <el-table :data="pagedLineRows" border>
             <el-table-column label="产线" min-width="250"><template #default="{ row }"><span class="line-name" :class="{ child: row.parentId }">{{ row.parentId ? '└ ' : '' }}{{ row.lineName }}</span><el-tag v-if="row.hasChildren" size="small" type="info" class="cascade-tag">父产线 · 同步子线</el-tag></template></el-table-column>
             <el-table-column label="当前版本" width="120"><template #default="{ row }"><span v-if="row.originalVersionId" class="mono">v{{ row.originalVersionNo }}</span><span v-else class="muted">未分配</span></template></el-table-column>
-            <el-table-column label="分配版本" width="260"><template #default="{ row }"><el-select v-model="row.versionId" style="width:100%" @change="onVersionChange(row)"><el-option label="不分配" :value="0" /><el-option v-for="version in publishedVersions" :key="version.id" :label="`v${version.versionNo}（${formatDateTime(version.publishedAt || version.createdAt)}）`" :value="version.id" /></el-select></template></el-table-column>
+            <el-table-column label="分配版本" width="260"><template #default="{ row }"><el-select v-model="row.versionId" style="width:100%" :disabled="auth.allDepartments" @change="onVersionChange(row)"><el-option label="不分配" :value="0" /><el-option v-for="version in publishedVersions" :key="version.id" :label="`v${version.versionNo}（${formatDateTime(version.publishedAt || version.createdAt)}）`" :value="version.id" /></el-select></template></el-table-column>
             <el-table-column label="调整结果" width="150"><template #default="{ row }"><el-tag v-if="row.versionId === row.originalVersionId" type="info">无变化</el-tag><el-tag v-else-if="row.versionId === 0" type="danger">将取消分配</el-tag><el-tag v-else type="warning">将切换版本</el-tag></template></el-table-column>
           </el-table>
+          <AppPagination v-model:page="linePage" v-model:size="lineSize" :total="lineRows.length" :page-sizes="[10, 20, 50, 100]" />
         </template>
         <div v-else class="empty-panel"><div><strong>从左侧选择一个模板</strong><p>然后为每条产线指定使用版本。</p></div></div>
       </main>
@@ -35,23 +37,34 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { ArrowRight } from '@element-plus/icons-vue'
 import { api } from '@/api'
+import { useAuthStore } from '@/stores/auth'
+import AppPagination from '@/components/AppPagination.vue'
+
+const auth = useAuthStore()
 
 type LineRow = { lineId: number; lineName: string; parentId?: number; hasChildren: boolean; versionId: number; originalVersionId: number; originalVersionNo: number }
 const kind = ref('all')
 const kindOptions = [{ label: '全部', value: 'all' }, { label: '首检', value: 'first_inspection' }, { label: '末检', value: 'final_inspection' }, { label: '报表', value: 'report' }, { label: '登记表', value: 'registration' }]
 const templates = ref<any[]>([])
+const templatePage = ref(1)
+const templateSize = ref(20)
+const templateTotal = ref(0)
 const selectedTemplate = ref<any>()
 const versions = ref<any[]>([])
 const lineRows = ref<LineRow[]>([])
+const linePage = ref(1)
+const lineSize = ref(20)
 const saving = ref(false)
 const publishing = ref(false)
 const publishedVersions = computed(() => versions.value.filter(version => version.status === 'published'))
 const draftVersions = computed(() => versions.value.filter(version => version.status === 'draft'))
 const latestDraft = computed(() => draftVersions.value[0])
+const pagedLineRows = computed(() => lineRows.value.slice((linePage.value - 1) * lineSize.value, linePage.value * lineSize.value))
 function kindName(value: string) { return kindOptions.find(item => item.value === value)?.label || value }
 function pad(value: number) { return String(value).padStart(2, '0') }
 function formatDateTime(value: string) { const date = new Date(value); if (Number.isNaN(date.getTime())) return '-'; return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}` }
-async function loadTemplates() { const { data } = await api.get('/admin/form-templates', { params: kind.value === 'all' ? {} : { kind: kind.value } }); templates.value = data.items; if (selectedTemplate.value && !templates.value.some(item => item.id === selectedTemplate.value.id)) selectedTemplate.value = undefined }
+function changeKind() { templatePage.value = 1; loadTemplates() }
+async function loadTemplates() { const { data } = await api.get('/admin/form-templates', { params: { ...(kind.value === 'all' ? {} : { kind: kind.value }), page: templatePage.value, size: templateSize.value } }); if (!data.items?.length && templatePage.value > 1) { templatePage.value -= 1; return loadTemplates() }; templates.value = data.items; templateTotal.value = data.total || 0; if (selectedTemplate.value && !templates.value.some(item => item.id === selectedTemplate.value.id)) selectedTemplate.value = undefined }
 async function selectTemplate(template: any) {
   selectedTemplate.value = template
   const detail = await api.get(`/admin/form-templates/${template.id}`)
@@ -59,11 +72,13 @@ async function selectTemplate(template: any) {
   const assignment = await api.get(`/admin/form-templates/${template.id}/assignments`)
   const lines = await api.get('/execution/lines')
   lineRows.value = buildLineRows(lines.data.items || [], assignment.data.items || [])
+  linePage.value = 1
 }
 function buildLineRows(lines: any[], assignments: any[]): LineRow[] {
   const ids = new Set<number>(lines.map(line => line.id))
-  const childrenOf = (id: number) => lines.filter(line => line.parentId === id).sort((a, b) => a.id - b.id)
-  const roots = lines.filter(line => !line.parentId || !ids.has(line.parentId)).sort((a, b) => a.id - b.id)
+  const compareCode = (a: any, b: any) => String(a.code || '').localeCompare(String(b.code || ''), 'zh-CN', { numeric: true, sensitivity: 'base' }) || a.id - b.id
+  const childrenOf = (id: number) => lines.filter(line => line.parentId === id).sort(compareCode)
+  const roots = lines.filter(line => !line.parentId || !ids.has(line.parentId)).sort(compareCode)
   const ordered: { line: any; hasChildren: boolean }[] = []
   for (const root of roots) {
     const children = childrenOf(root.id)

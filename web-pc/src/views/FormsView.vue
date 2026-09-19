@@ -3,15 +3,15 @@
     <div class="page-head">
       <div><p class="section-label">表单工厂</p><h2 class="page-title">任务与表单配置</h2><p class="page-desc">用可视化方式定义首末检、报表和登记表，业务人员不需要接触 JSON。</p></div>
       <div class="page-actions">
-        <el-button type="danger" plain size="large" :disabled="!unusedItems.length" @click="deleteUnused">
+        <el-button type="danger" plain size="large" :disabled="auth.allDepartments || !unusedItems.length" @click="deleteUnused">
           删除未使用<span v-if="unusedItems.length">（{{ unusedItems.length }}）</span>
         </el-button>
-        <el-button type="primary" size="large" @click="openCreate">新建模板</el-button>
+        <el-button type="primary" size="large" :disabled="auth.allDepartments" @click="openCreate">新建模板</el-button>
       </div>
     </div>
 
     <div class="toolbar">
-      <el-segmented v-model="kind" :options="kindOptions" @change="load" />
+      <el-segmented v-model="kind" :options="kindOptions" @change="changeKind" />
       <div class="toolbar-spacer"></div>
       <span class="result-count">共 {{ items.length }} 个模板</span>
     </div>
@@ -19,6 +19,7 @@
     <el-table :data="items" border row-key="id">
       <el-table-column prop="code" label="编码" width="190" />
       <el-table-column prop="name" label="名称" min-width="200" />
+      <el-table-column label="部门" width="150"><template #default="{ row }">{{ row.department?.name || '-' }}</template></el-table-column>
       <el-table-column label="类型" width="140"><template #default="{ row }"><span class="kind-chip" :class="row.kind">{{ kindName(row.kind) }}</span></template></el-table-column>
       <el-table-column label="使用情况" width="190">
         <template #default="{ row }">
@@ -26,8 +27,9 @@
           <span class="usage-note">产线 {{ row.assignmentCount }} · 填报 {{ row.submissionCount }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="380"><template #default="{ row }"><el-button link @click="view(row)">版本记录</el-button><el-button link @click="edit(row)">编辑</el-button><el-button link @click="publishLatest(row)">发布起草</el-button><el-button v-if="row.kind==='first_inspection'" link @click="copy(row)">复制为末检</el-button><el-button v-if="row.canDelete" link type="danger" @click="deleteOne(row)">删除</el-button></template></el-table-column>
+      <el-table-column label="操作" width="380"><template #default="{ row }"><el-button link @click="view(row)">版本记录</el-button><el-button link :disabled="auth.allDepartments" @click="edit(row)">编辑</el-button><el-button link :disabled="auth.allDepartments" @click="publishLatest(row)">发布起草</el-button><el-button v-if="row.kind==='first_inspection'" link :disabled="auth.allDepartments" @click="copy(row)">复制为末检</el-button><el-button v-if="row.canDelete" link type="danger" :disabled="auth.allDepartments" @click="deleteOne(row)">删除</el-button></template></el-table-column>
     </el-table>
+    <AppPagination v-model:page="page" v-model:size="size" :total="total" @change="load" />
 
     <el-drawer v-model="builderOpen" size="94%" :with-header="false" destroy-on-close>
       <div class="builder-shell">
@@ -103,7 +105,7 @@
       </div>
     </el-drawer>
 
-    <el-drawer v-model="versionsOpen" title="版本记录" size="58%"><el-table :data="versions" border><el-table-column prop="versionNo" label="版本" width="80"><template #default="{ row }">v{{ row.versionNo }}</template></el-table-column><el-table-column prop="status" label="状态" width="120" /><el-table-column label="发布时间"><template #default="{ row }">{{ formatDateTime(row.publishedAt) }}</template></el-table-column><el-table-column label="创建时间"><template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template></el-table-column></el-table></el-drawer>
+    <el-drawer v-model="versionsOpen" title="版本记录" size="58%"><el-table :data="pagedVersions" border><el-table-column prop="versionNo" label="版本" width="80"><template #default="{ row }">v{{ row.versionNo }}</template></el-table-column><el-table-column prop="status" label="状态" width="120" /><el-table-column label="发布时间"><template #default="{ row }">{{ formatDateTime(row.publishedAt) }}</template></el-table-column><el-table-column label="创建时间"><template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template></el-table-column></el-table><AppPagination v-model:page="versionPage" v-model:size="versionSize" :total="versions.length" :page-sizes="[10, 20, 50]" /></el-drawer>
   </div>
 </template>
 
@@ -112,6 +114,13 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowDown, ArrowUp, Delete, Plus } from '@element-plus/icons-vue'
 import { api } from '@/api'
+import { useAuthStore } from '@/stores/auth'
+import AppPagination from '@/components/AppPagination.vue'
+
+const auth = useAuthStore()
+const page = ref(1)
+const size = ref(20)
+const total = ref(0)
 import { formatDateTime } from '@shared'
 
 type FieldType = 'text' | 'number' | 'single_select' | 'multi_select' | 'datetime' | 'static_text' | 'product'
@@ -126,6 +135,9 @@ const items = ref<any[]>([])
 const unusedItems = computed(() => items.value.filter(item => item.isUnused))
 const versions = ref<any[]>([])
 const versionsOpen = ref(false)
+const versionPage = ref(1)
+const versionSize = ref(20)
+const pagedVersions = computed(() => versions.value.slice((versionPage.value - 1) * versionSize.value, versionPage.value * versionSize.value))
 const builderOpen = ref(false)
 const saving = ref(false)
 const activeIndex = ref(0)
@@ -163,8 +175,14 @@ function syncOptionValue(option: Option) { if (!option.value) option.value = `op
 function onTypeChange(field: EditorField) { if (isSelect(field.type) && !field.options.length) { addOption(field); addOption(field) } if (!canRepeatValue(field.type)) field.allowMultiple = false; if (field.type === 'static_text') { field.required = false; field.allowMultiple = false } if (field.type === 'product') { field.allowMultiple = false; field.repeatable = false; field.unit = ''; field.defaultValue = '' } }
 function appendToken(field: EditorField, token: string) { field.defaultValue = `${field.defaultValue || ''}${token}` }
 function openCreate() { editingTemplateId.value = null; metadata.code = ''; metadata.name = ''; metadata.kind = kind.value; fields.value = [emptyField(0)]; fields.value[0].label = '检测值'; fields.value[0].type = kind.value === 'report' ? 'text' : 'number'; fields.value[0].unit = kind.value === 'report' ? '' : 'mm'; fields.value[0].allowMultiple = kind.value === 'first_inspection' || kind.value === 'final_inspection'; activeIndex.value = 0; builderOpen.value = true }
-async function load() { const { data } = await api.get('/admin/form-templates', { params: { kind: kind.value } }); items.value = data.items }
-async function view(row: any) { const { data } = await api.get(`/admin/form-templates/${row.id}`); versions.value = data.versions; versionsOpen.value = true }
+function changeKind() { page.value = 1; load() }
+async function load() {
+  const { data } = await api.get('/admin/form-templates', { params: { kind: kind.value, page: page.value, size: size.value } })
+  if (!data.items?.length && page.value > 1) { page.value -= 1; return load() }
+  items.value = data.items
+  total.value = data.total || 0
+}
+async function view(row: any) { const { data } = await api.get(`/admin/form-templates/${row.id}`); versions.value = data.versions; versionPage.value = 1; versionsOpen.value = true }
 function buildSchema() { return { fields: fields.value.map((field, index) => ({ ...field, sortOrder: index, options: field.options.map(option => ({ ...option, value: option.value || option.label })) })) } }
 async function save() {
   if (!metadata.name.trim() || !metadata.code.trim()) { ElMessage.warning('请填写模板名称和模板编码'); return }

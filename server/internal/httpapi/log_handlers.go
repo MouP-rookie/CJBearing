@@ -1,7 +1,9 @@
 package httpapi
 
 import (
+	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"bearing-inspection/internal/httpapi/response"
@@ -66,8 +68,12 @@ type calendarItem struct {
 }
 
 func (s *Server) listLogs(c *gin.Context) {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
 	lineID, _ := strconv.ParseUint(c.Query("lineId"), 10, 64)
-	if lineID == 0 || !s.canLine(c.GetUint64("user_id"), rbac.PermLogView, lineID) {
+	if lineID == 0 || !s.canLineInScope(scope, rbac.PermLogView, lineID) {
 		response.Fail(c, 403, "forbidden", "没有该产线权限", nil)
 		return
 	}
@@ -249,8 +255,12 @@ func (s *Server) latestInspectionIDs(lineIDs []uint64) map[string]uint64 {
 }
 
 func (s *Server) logCalendar(c *gin.Context) {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
 	lineID, _ := strconv.ParseUint(c.Query("lineId"), 10, 64)
-	if lineID == 0 || !s.canLine(c.GetUint64("user_id"), rbac.PermLogView, lineID) {
+	if lineID == 0 || !s.canLineInScope(scope, rbac.PermLogView, lineID) {
 		response.Fail(c, 403, "forbidden", "没有该产线权限", nil)
 		return
 	}
@@ -285,7 +295,11 @@ func (s *Server) logCalendar(c *gin.Context) {
 }
 
 func (s *Server) listAuditLogs(c *gin.Context) {
-	q := s.db.Table("audit_logs").Order("created_at desc")
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
+	q := scope.FilterOptional(s.db.Table("audit_logs"), "department_id").Order("created_at desc")
 	if entity := c.Query("entityType"); entity != "" {
 		q = q.Where("entity_type = ?", entity)
 	}
@@ -304,16 +318,56 @@ func (s *Server) listAuditLogs(c *gin.Context) {
 }
 
 func (s *Server) listBackups(c *gin.Context) {
-	items, err := s.backups.List()
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
+	page, size := pageParams(c)
+	items, total, err := s.backups.ListPage(scope.DepartmentID, scope.AllDepartments, page, size)
 	if err != nil {
 		response.Fail(c, 500, "db_error", "查询备份失败", err.Error())
 		return
 	}
-	response.OK(c, gin.H{"items": items})
+	response.OK(c, gin.H{"items": items, "total": total, "page": page, "size": size})
 }
 
 func (s *Server) createBackup(c *gin.Context) {
-	rec, err := s.backups.Create(s.cfg.DatabaseURL, c.GetUint64("user_id"))
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
+	var req struct {
+		Type string `json:"type"`
+	}
+	_ = c.ShouldBindJSON(&req)
+	kind := strings.ToLower(strings.TrimSpace(req.Type))
+	if kind == "" {
+		if scope.AllDepartments {
+			kind = model.BackupKindFull
+		} else {
+			kind = model.BackupKindDepartment
+		}
+	}
+	var rec *model.BackupRecord
+	var err error
+	switch kind {
+	case model.BackupKindFull:
+		if scope.User.Role.Code != "super_admin" {
+			response.Fail(c, http.StatusForbidden, "forbidden", "仅超级管理员可以生成完整数据库备份", nil)
+			return
+		}
+		rec, err = s.backups.Create(s.cfg.DatabaseURL, c.GetUint64("user_id"))
+	case model.BackupKindDepartment:
+		departmentID, scopeErr := scope.WritableDepartmentID(s.db)
+		if scopeErr != nil {
+			response.Fail(c, http.StatusBadRequest, "department_required", scopeErr.Error(), nil)
+			return
+		}
+		rec, err = s.backups.CreateDepartmentArchive(departmentID, c.GetUint64("user_id"))
+	default:
+		response.Fail(c, http.StatusBadRequest, "validation_error", "备份类型无效", nil)
+		return
+	}
 	if err != nil {
 		response.Fail(c, 500, "backup_failed", "备份失败", err.Error())
 		return
@@ -322,11 +376,15 @@ func (s *Server) createBackup(c *gin.Context) {
 }
 
 func (s *Server) downloadBackup(c *gin.Context) {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
 	id, ok := parseUint64(c, "id")
 	if !ok {
 		return
 	}
-	rec, err := s.backups.Get(id)
+	rec, err := s.backups.GetForScope(id, scope.DepartmentID, scope.AllDepartments)
 	if err != nil {
 		response.Fail(c, 404, "not_found", "备份不存在", nil)
 		return
@@ -335,9 +393,13 @@ func (s *Server) downloadBackup(c *gin.Context) {
 }
 
 func (s *Server) listInstrumentMessages(c *gin.Context) {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
 	page, size := pageParams(c)
 	var total int64
-	q := s.db.Table("instrument_messages")
+	q := scope.FilterOptional(s.db.Table("instrument_messages"), "department_id")
 	_ = q.Count(&total).Error
 	var items []model.InstrumentMessage
 	if err := q.Order("received_at desc").Offset((page - 1) * size).Limit(size).Find(&items).Error; err != nil {

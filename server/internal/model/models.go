@@ -19,13 +19,28 @@ const (
 
 	SubmissionStatusActive = "active"
 	SubmissionStatusVoided = "voided"
+
+	BackupKindFull       = "full"
+	BackupKindDepartment = "department"
 )
+
+type Department struct {
+	ID        uint64         `gorm:"primaryKey" json:"id"`
+	Code      string         `gorm:"size:64;index;not null" json:"code"`
+	Name      string         `gorm:"size:128;not null" json:"name"`
+	Enabled   bool           `gorm:"default:true;not null" json:"enabled"`
+	CreatedAt time.Time      `json:"createdAt"`
+	UpdatedAt time.Time      `json:"updatedAt"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+}
 
 type User struct {
 	ID           uint64         `gorm:"primaryKey" json:"id"`
 	Account      string         `gorm:"size:64;index;not null" json:"account"`
 	Name         string         `gorm:"size:128;not null" json:"name"`
 	PasswordHash string         `gorm:"size:255;not null" json:"-"`
+	DepartmentID *uint64        `gorm:"index" json:"departmentId,omitempty"`
+	Department   *Department    `gorm:"foreignKey:DepartmentID" json:"department,omitempty"`
 	RoleID       uint64         `gorm:"index;not null" json:"roleId"`
 	Role         Role           `gorm:"foreignKey:RoleID" json:"role,omitempty"`
 	Enabled      bool           `gorm:"default:true;not null" json:"enabled"`
@@ -64,36 +79,42 @@ type RoleLineScope struct {
 }
 
 type Line struct {
-	ID        uint64         `gorm:"primaryKey" json:"id"`
-	ParentID  *uint64        `gorm:"index" json:"parentId"`
-	Code      string         `gorm:"size:64;index;not null" json:"code"`
-	Name      string         `gorm:"size:128;not null" json:"name"`
-	Level     int            `gorm:"not null" json:"level"`
-	Enabled   bool           `gorm:"default:true;not null" json:"enabled"`
-	CreatedAt time.Time      `json:"createdAt"`
-	UpdatedAt time.Time      `json:"updatedAt"`
-	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+	ID           uint64         `gorm:"primaryKey" json:"id"`
+	DepartmentID uint64         `gorm:"index;not null" json:"departmentId"`
+	Department   Department     `gorm:"foreignKey:DepartmentID" json:"department,omitempty"`
+	ParentID     *uint64        `gorm:"index" json:"parentId"`
+	Code         string         `gorm:"size:64;index;not null" json:"code"`
+	Name         string         `gorm:"size:128;not null" json:"name"`
+	Level        int            `gorm:"not null" json:"level"`
+	Enabled      bool           `gorm:"default:true;not null" json:"enabled"`
+	CreatedAt    time.Time      `json:"createdAt"`
+	UpdatedAt    time.Time      `json:"updatedAt"`
+	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
 type Product struct {
-	ID        uint64         `gorm:"primaryKey" json:"id"`
-	Code      string         `gorm:"size:64;index;not null" json:"code"`
-	Name      string         `gorm:"size:128;not null" json:"name"`
-	Enabled   bool           `gorm:"default:true;not null" json:"enabled"`
-	Lines     []Line         `gorm:"many2many:product_lines" json:"lines,omitempty"`
-	CreatedAt time.Time      `json:"createdAt"`
-	UpdatedAt time.Time      `json:"updatedAt"`
-	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+	ID           uint64         `gorm:"primaryKey" json:"id"`
+	DepartmentID uint64         `gorm:"index;not null" json:"departmentId"`
+	Department   Department     `gorm:"foreignKey:DepartmentID" json:"department,omitempty"`
+	Code         string         `gorm:"size:64;index;not null" json:"code"`
+	Name         string         `gorm:"size:128;not null" json:"name"`
+	Enabled      bool           `gorm:"default:true;not null" json:"enabled"`
+	Lines        []Line         `gorm:"many2many:product_lines" json:"lines,omitempty"`
+	CreatedAt    time.Time      `json:"createdAt"`
+	UpdatedAt    time.Time      `json:"updatedAt"`
+	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
 }
 type ShiftPlan struct {
-	ID          uint64          `gorm:"primaryKey" json:"id"`
-	Name        string          `gorm:"size:128;not null" json:"name"`
-	EffectiveAt time.Time       `gorm:"index;not null" json:"effectiveAt"`
-	CreatedBy   uint64          `json:"createdBy"`
-	Items       []ShiftPlanItem `gorm:"foreignKey:PlanID" json:"items,omitempty"`
-	CreatedAt   time.Time       `json:"createdAt"`
-	UpdatedAt   time.Time       `json:"updatedAt"`
-	DeletedAt   gorm.DeletedAt  `gorm:"index" json:"-"`
+	ID           uint64          `gorm:"primaryKey" json:"id"`
+	DepartmentID uint64          `gorm:"index;not null" json:"departmentId"`
+	Department   Department      `gorm:"foreignKey:DepartmentID" json:"department,omitempty"`
+	Name         string          `gorm:"size:128;not null" json:"name"`
+	EffectiveAt  time.Time       `gorm:"index;not null" json:"effectiveAt"`
+	CreatedBy    uint64          `json:"createdBy"`
+	Items        []ShiftPlanItem `gorm:"foreignKey:PlanID" json:"items,omitempty"`
+	CreatedAt    time.Time       `json:"createdAt"`
+	UpdatedAt    time.Time       `json:"updatedAt"`
+	DeletedAt    gorm.DeletedAt  `gorm:"index" json:"-"`
 }
 
 type ShiftPlanItem struct {
@@ -108,6 +129,8 @@ type ShiftPlanItem struct {
 
 type FormTemplate struct {
 	ID               uint64         `gorm:"primaryKey" json:"id"`
+	DepartmentID     uint64         `gorm:"index;not null" json:"departmentId"`
+	Department       Department     `gorm:"foreignKey:DepartmentID" json:"department,omitempty"`
 	Code             string         `gorm:"size:96;index;not null" json:"code"`
 	Name             string         `gorm:"size:128;not null" json:"name"`
 	Kind             string         `gorm:"size:32;index;not null" json:"kind"`
@@ -140,6 +163,8 @@ type LineFormAssignment struct {
 
 type Submission struct {
 	ID                 uint64         `gorm:"primaryKey" json:"id"`
+	DepartmentID       uint64         `gorm:"index;not null" json:"departmentId"`
+	Department         Department     `gorm:"foreignKey:DepartmentID" json:"department,omitempty"`
 	TemplateID         uint64         `gorm:"index;not null" json:"templateId"`
 	VersionID          uint64         `gorm:"index;not null" json:"versionId"`
 	LineID             uint64         `gorm:"index;not null" json:"lineId"`
@@ -192,25 +217,29 @@ type FieldValue struct {
 }
 
 type AuditLog struct {
-	ID         uint64         `gorm:"primaryKey" json:"id"`
-	EntityType string         `gorm:"size:64;index;not null" json:"entityType"`
-	EntityID   uint64         `gorm:"index;not null" json:"entityId"`
-	Action     string         `gorm:"size:64;index;not null" json:"action"`
-	BeforeJSON datatypes.JSON `gorm:"type:jsonb" json:"before"`
-	AfterJSON  datatypes.JSON `gorm:"type:jsonb" json:"after"`
-	ActorID    uint64         `gorm:"index" json:"actorId"`
-	IP         string         `gorm:"size:64" json:"ip"`
-	RequestID  string         `gorm:"size:64;index" json:"requestId"`
-	CreatedAt  time.Time      `gorm:"index" json:"createdAt"`
+	ID           uint64         `gorm:"primaryKey" json:"id"`
+	DepartmentID *uint64        `gorm:"index" json:"departmentId,omitempty"`
+	Department   *Department    `gorm:"foreignKey:DepartmentID" json:"department,omitempty"`
+	EntityType   string         `gorm:"size:64;index;not null" json:"entityType"`
+	EntityID     uint64         `gorm:"index;not null" json:"entityId"`
+	Action       string         `gorm:"size:64;index;not null" json:"action"`
+	BeforeJSON   datatypes.JSON `gorm:"type:jsonb" json:"before"`
+	AfterJSON    datatypes.JSON `gorm:"type:jsonb" json:"after"`
+	ActorID      uint64         `gorm:"index" json:"actorId"`
+	IP           string         `gorm:"size:64" json:"ip"`
+	RequestID    string         `gorm:"size:64;index" json:"requestId"`
+	CreatedAt    time.Time      `gorm:"index" json:"createdAt"`
 }
 
 type InstrumentMessage struct {
-	ID         uint64         `gorm:"primaryKey" json:"id"`
-	Topic      string         `gorm:"size:255;index" json:"topic"`
-	DeviceID   string         `gorm:"size:128;index" json:"deviceId"`
-	RawJSON    datatypes.JSON `gorm:"type:jsonb;not null" json:"rawJson"`
-	ReceivedAt time.Time      `gorm:"index;not null" json:"receivedAt"`
-	Processed  bool           `gorm:"default:false;index" json:"processed"`
+	ID           uint64         `gorm:"primaryKey" json:"id"`
+	DepartmentID *uint64        `gorm:"index" json:"departmentId,omitempty"`
+	Department   *Department    `gorm:"foreignKey:DepartmentID" json:"department,omitempty"`
+	Topic        string         `gorm:"size:255;index" json:"topic"`
+	DeviceID     string         `gorm:"size:128;index" json:"deviceId"`
+	RawJSON      datatypes.JSON `gorm:"type:jsonb;not null" json:"rawJson"`
+	ReceivedAt   time.Time      `gorm:"index;not null" json:"receivedAt"`
+	Processed    bool           `gorm:"default:false;index" json:"processed"`
 }
 
 type AppSetting struct {
@@ -218,11 +247,22 @@ type AppSetting struct {
 	Value     string    `gorm:"type:text;not null" json:"value"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }
+
+type DepartmentSetting struct {
+	DepartmentID uint64    `gorm:"primaryKey" json:"departmentId"`
+	Key          string    `gorm:"primaryKey;size:64" json:"key"`
+	Value        string    `gorm:"type:text;not null" json:"value"`
+	UpdatedAt    time.Time `json:"updatedAt"`
+}
+
 type BackupRecord struct {
-	ID        uint64    `gorm:"primaryKey" json:"id"`
-	FileName  string    `gorm:"size:255;not null" json:"fileName"`
-	FilePath  string    `gorm:"size:512;not null" json:"filePath"`
-	FileSize  int64     `json:"fileSize"`
-	CreatedBy uint64    `gorm:"index;not null" json:"createdBy"`
-	CreatedAt time.Time `json:"createdAt"`
+	ID           uint64      `gorm:"primaryKey" json:"id"`
+	Kind         string      `gorm:"size:32;index;not null;default:full" json:"kind"`
+	DepartmentID *uint64     `gorm:"index" json:"departmentId,omitempty"`
+	Department   *Department `gorm:"foreignKey:DepartmentID" json:"department,omitempty"`
+	FileName     string      `gorm:"size:255;not null" json:"fileName"`
+	FilePath     string      `gorm:"size:512;not null" json:"filePath"`
+	FileSize     int64       `json:"fileSize"`
+	CreatedBy    uint64      `gorm:"index;not null" json:"createdBy"`
+	CreatedAt    time.Time   `json:"createdAt"`
 }

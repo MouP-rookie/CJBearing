@@ -2,11 +2,12 @@
   <div class="page products-page">
     <div class="page-head">
       <div><p class="section-label">产品档案</p><h2 class="page-title">产品维护</h2><p class="page-desc">维护正在生产的产品清单并关联可生产的产线，点检作业时按当前产线过滤选择。</p></div>
-      <el-button type="primary" size="large" @click="openCreate()">新增产品</el-button>
+      <el-button type="primary" size="large" :disabled="auth.allDepartments" @click="openCreate()">新增产品</el-button>
     </div>
     <el-table :data="items" border row-key="id">
       <el-table-column prop="code" label="产品编码" width="180" />
       <el-table-column prop="name" label="产品名称" min-width="200" />
+      <el-table-column label="部门" width="150"><template #default="{ row }">{{ row.department?.name || '-' }}</template></el-table-column>
       <el-table-column label="关联产线" min-width="260">
         <template #default="{ row }">
           <el-tag v-for="line in row.lines || []" :key="line.id" size="small" class="line-tag">{{ line.name }}</el-tag>
@@ -16,12 +17,13 @@
       <el-table-column label="状态" width="100"><template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '启用' : '停用' }}</el-tag></template></el-table-column>
       <el-table-column label="操作" width="220">
         <template #default="{ row }">
-          <el-button link @click="openEdit(row)">编辑</el-button>
-          <el-button link @click="toggle(row)">{{ row.enabled ? '停用' : '启用' }}</el-button>
-          <el-button link type="danger" @click="remove(row)">删除</el-button>
+          <el-button link :disabled="auth.allDepartments" @click="openEdit(row)">编辑</el-button>
+          <el-button link :disabled="auth.allDepartments" @click="toggle(row)">{{ row.enabled ? '停用' : '启用' }}</el-button>
+          <el-button link type="danger" :disabled="auth.allDepartments" @click="remove(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
+    <AppPagination v-model:page="page" v-model:size="size" :total="total" @change="load" />
     <el-dialog v-model="dialog" :title="form.id ? '编辑产品' : '新增产品'" width="520px">
       <el-form label-position="top">
         <el-form-item label="产品编码"><el-input v-model="form.code" :disabled="!!form.id" placeholder="例如：6203-2RS" /></el-form-item>
@@ -41,8 +43,14 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '@/api'
+import { useAuthStore } from '@/stores/auth'
+import AppPagination from '@/components/AppPagination.vue'
 
+const auth = useAuthStore()
 const items = ref<any[]>([])
+const page = ref(1)
+const size = ref(20)
+const total = ref(0)
 const lineOptions = ref<any[]>([])
 const lineTree = computed(() => {
   const nodes = new Map<number, any>()
@@ -52,14 +60,19 @@ const lineTree = computed(() => {
     if (node.parentId && nodes.has(node.parentId)) nodes.get(node.parentId).children.push(node)
     else roots.push(node)
   }
-  const sortTree = (items: any[]) => { items.sort((a, b) => a.id - b.id); for (const item of items) sortTree(item.children) }
+  const sortTree = (items: any[]) => { items.sort((a, b) => String(a.code || '').localeCompare(String(b.code || ''), 'zh-CN', { numeric: true, sensitivity: 'base' }) || a.id - b.id); for (const item of items) sortTree(item.children) }
   sortTree(roots)
   return roots
 })
 const dialog = ref(false)
 const saving = ref(false)
 const form = reactive({ id: 0, code: '', name: '', enabled: true, lineIds: [] as number[] })
-async function load() { const { data } = await api.get('/admin/products'); items.value = data.items }
+async function load() {
+  const { data } = await api.get('/admin/products', { params: { page: page.value, size: size.value } })
+  if (!data.items?.length && page.value > 1) { page.value -= 1; return load() }
+  items.value = data.items
+  total.value = data.total || 0
+}
 async function loadLines() { const { data } = await api.get('/admin/product-line-options'); lineOptions.value = data.items }
 function openCreate() { form.id = 0; form.code = ''; form.name = ''; form.enabled = true; form.lineIds = []; dialog.value = true }
 function openEdit(row: any) { form.id = row.id; form.code = row.code; form.name = row.name; form.enabled = row.enabled; form.lineIds = (row.lines || []).map((line: any) => line.id); dialog.value = true }

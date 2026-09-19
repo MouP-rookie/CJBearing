@@ -240,12 +240,14 @@ async function loadLines() {
   const { data } = await api.get('/execution/lines')
   lines.value = data.items
   const ids = new Set(lines.value.map(line => line.id))
-  const childrenOf = (id: number) => lines.value.filter(line => line.parentId === id).sort((a, b) => a.id - b.id)
-  const roots = lines.value.filter(line => !line.parentId || !ids.has(line.parentId)).sort((a, b) => a.id - b.id)
+  const compareCode = (a: any, b: any) => String(a.code || '').localeCompare(String(b.code || ''), 'zh-CN', { numeric: true, sensitivity: 'base' }) || a.id - b.id
+  const childrenOf = (id: number) => lines.value.filter(line => line.parentId === id).sort(compareCode)
+  const roots = lines.value.filter(line => !line.parentId || !ids.has(line.parentId)).sort(compareCode)
   const options: any[] = []
   for (const root of roots) {
-    options.push({ id: root.id, label: root.name })
-    for (const child of childrenOf(root.id)) options.push({ id: child.id, label: `└ ${child.name}` })
+    const rootDepartment = auth.allDepartments && root.department?.name ? `[${root.department.name}] ` : ''
+    options.push({ id: root.id, label: `${rootDepartment}${root.name}` })
+    for (const child of childrenOf(root.id)) options.push({ id: child.id, label: `${rootDepartment}└ ${child.name}` })
   }
   lineOptions.value = options
   if (options.length) {
@@ -256,7 +258,7 @@ async function loadLines() {
 }
 
 async function loadTemplates() {
-  const { data } = await api.get('/admin/form-templates')
+  const { data } = await api.get('/admin/form-templates', { params: { page: 1, size: 200 } })
   templates.value = data.items
 }
 
@@ -356,10 +358,12 @@ async function exportData() {
 }
 
 function canVoidSubmission(row: any) {
+  if (auth.allDepartments) return false
   return auth.can('submission.void_scope') || (auth.can('submission.void_own') && row.createdBy === auth.user?.id)
 }
 
 function canRestoreSubmission(row: any) {
+  if (auth.allDepartments) return false
   return auth.can('submission.edit_scope') || (auth.can('submission.edit_own') && row.createdBy === auth.user?.id)
 }
 
@@ -368,10 +372,12 @@ function isFirstDetail(submission: any, detail: any, index: number) {
 }
 
 function canVoidDetail(detail: any) {
+  if (auth.allDepartments) return false
   return auth.can('submission.void_scope') || (auth.can('submission.void_own') && detail.operatorId === auth.user?.id)
 }
 
 function canRestoreDetail(detail: any) {
+  if (auth.allDepartments) return false
   return auth.can('submission.edit_scope') || (auth.can('submission.edit_own') && detail.operatorId === auth.user?.id)
 }
 

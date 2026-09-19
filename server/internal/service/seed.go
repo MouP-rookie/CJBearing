@@ -14,11 +14,12 @@ import (
 
 var adminPermissionCodes = []string{
 	rbac.PermPCLogin, rbac.PermPDALogin, rbac.PermUserManage, rbac.PermProductManage,
+	rbac.PermLineManage, rbac.PermShiftManage,
 	rbac.PermFormView, rbac.PermFormManage, rbac.PermFormPublish, rbac.PermFormRollback,
 	rbac.PermExecutionView, rbac.PermExecutionFill,
 	rbac.PermSubmissionEditOwn, rbac.PermSubmissionEditScope,
 	rbac.PermSubmissionVoidOwn, rbac.PermSubmissionVoidScope,
-	rbac.PermLogView, rbac.PermExport,
+	rbac.PermLogView, rbac.PermExport, rbac.PermBackupManage, rbac.PermSystemManage,
 }
 
 var normalPermissionCodes = []string{
@@ -67,16 +68,36 @@ func Seed(db *gorm.DB) error {
 			return err
 		}
 
-		var admin model.User
-		err := tx.Where("account = ?", "admin").First(&admin).Error
+		department := model.Department{Code: "donggang"}
+		if err := tx.Where("code = ?", department.Code).FirstOrCreate(&department, model.Department{Code: "donggang", Name: "东港分厂", Enabled: true}).Error; err != nil {
+			return err
+		}
+
+		var superAdmin model.User
+		err := tx.Joins("JOIN roles ON roles.id = users.role_id").
+			Where("roles.code = ? AND roles.deleted_at IS NULL AND users.deleted_at IS NULL", "super_admin").
+			First(&superAdmin).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			hash, hashErr := auth.HashPassword("1234")
-			if hashErr != nil {
-				return hashErr
-			}
-			admin = model.User{Account: "admin", Name: "系统管理员", PasswordHash: hash, RoleID: roleByCode["super_admin"].ID, Enabled: true}
-			if err := tx.Create(&admin).Error; err != nil {
+			var admin model.User
+			err = tx.Where("account = ?", "admin").First(&admin).Error
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				hash, hashErr := auth.HashPassword("1234")
+				if hashErr != nil {
+					return hashErr
+				}
+				admin = model.User{Account: "admin", Name: "系统管理员", PasswordHash: hash, RoleID: roleByCode["super_admin"].ID, Enabled: true}
+				if err := tx.Create(&admin).Error; err != nil {
+					return err
+				}
+			} else if err != nil {
 				return err
+			} else {
+				admin.RoleID = roleByCode["super_admin"].ID
+				admin.DepartmentID = nil
+				admin.Enabled = true
+				if err := tx.Save(&admin).Error; err != nil {
+					return err
+				}
 			}
 		} else if err != nil {
 			return err

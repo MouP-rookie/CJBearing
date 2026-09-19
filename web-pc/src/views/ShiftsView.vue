@@ -1,14 +1,16 @@
 <template>
   <div class="page shift-page">
-    <div class="page-head"><div><p class="section-label">班次版本</p><h2 class="page-title">班次配置</h2><p class="page-desc">修改班次会生成新的生效版本，历史填报仍保留原班次名称和时间。</p></div><el-button type="primary" size="large" @click="openCreate">新增班次计划</el-button></div>
+    <div class="page-head"><div><p class="section-label">班次版本</p><h2 class="page-title">班次配置</h2><p class="page-desc">修改班次会生成新的生效版本，历史填报仍保留原班次名称和时间。</p></div><el-button type="primary" size="large" :disabled="auth.allDepartments" @click="openCreate">新增班次计划</el-button></div>
 
     <el-table :data="plans" border row-key="id">
       <el-table-column prop="name" label="计划名称" min-width="170" />
+      <el-table-column label="部门" width="150"><template #default="{ row }">{{ row.department?.name || '-' }}</template></el-table-column>
       <el-table-column label="生效时间" width="220"><template #default="{ row }"><span class="mono">{{ formatDateTime(row.effectiveAt) }}</span></template></el-table-column>
       <el-table-column label="班次安排" min-width="350"><template #default="{ row }"><div class="shift-tags"><el-tag v-for="item in row.items" :key="item.id" effect="plain" type="info">{{ item.name }} {{ item.startTime }} - {{ item.endTime }}</el-tag></div></template></el-table-column>
       <el-table-column label="状态" width="100"><template #default="{ $index }"><el-tag v-if="$index === 0" type="success">当前生效</el-tag><span v-else class="muted">历史版本</span></template></el-table-column>
-      <el-table-column label="操作" width="180"><template #default="{ row }"><el-button link @click="openEdit(row)">编辑</el-button><el-button link type="danger" @click="remove(row)">删除</el-button></template></el-table-column>
+      <el-table-column label="操作" width="180"><template #default="{ row }"><el-button link :disabled="auth.allDepartments" @click="openEdit(row)">编辑</el-button><el-button link type="danger" :disabled="auth.allDepartments" @click="remove(row)">删除</el-button></template></el-table-column>
     </el-table>
+    <AppPagination v-model:page="page" v-model:size="size" :total="total" @change="load" />
 
     <el-dialog v-model="dialog" :title="editingId ? '编辑班次计划' : '新增班次计划'" width="760px">
       <el-form label-position="top">
@@ -36,9 +38,15 @@ import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, Plus } from '@element-plus/icons-vue'
 import { api } from '@/api'
+import { useAuthStore } from '@/stores/auth'
+import AppPagination from '@/components/AppPagination.vue'
 
+const auth = useAuthStore()
 type ShiftItemForm = { name: string; start: string; end: string; crossMidnight: boolean }
 const plans = ref<any[]>([])
+const page = ref(1)
+const size = ref(20)
+const total = ref(0)
 const dialog = ref(false)
 const saving = ref(false)
 const editingId = ref(0)
@@ -49,7 +57,12 @@ function formatDateTime(value: string | Date) { const date = new Date(value); if
 function nowString() { return formatDateTime(new Date()) }
 function createDefaultItems(): ShiftItemForm[] { return [{ name: '白班', start: '07:00', end: '19:00', crossMidnight: false }, { name: '中班', start: '19:00', end: '07:00', crossMidnight: true }] }
 function addItem() { form.items.push({ name: '', start: '', end: '', crossMidnight: false }) }
-async function load() { const { data } = await api.get('/admin/shifts'); plans.value = data.items }
+async function load() {
+  const { data } = await api.get('/admin/shifts', { params: { page: page.value, size: size.value } })
+  if (!data.items?.length && page.value > 1) { page.value -= 1; return load() }
+  plans.value = data.items
+  total.value = data.total || 0
+}
 function openCreate() { editingId.value = 0; form.name = '标准两班'; form.effectiveAt = nowString(); form.items = createDefaultItems(); dialog.value = true }
 function openEdit(plan: any) { editingId.value = plan.id; form.name = plan.name; form.effectiveAt = formatDateTime(plan.effectiveAt); form.items = (plan.items || []).map((item: any) => ({ name: item.name, start: item.startTime, end: item.endTime, crossMidnight: item.crossMidnight })); dialog.value = true }
 async function save() {

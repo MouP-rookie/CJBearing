@@ -58,12 +58,16 @@ type exportSubmission struct {
 }
 
 func (s *Server) exportData(c *gin.Context) {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
 	var req exportRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Fail(c, 400, "invalid_request", "参数错误", err.Error())
 		return
 	}
-	if req.LineID == 0 || !s.canLine(c.GetUint64("user_id"), rbac.PermLogView, req.LineID) {
+	if req.LineID == 0 || !s.canLineInScope(scope, rbac.PermLogView, req.LineID) {
 		response.Fail(c, 403, "forbidden", "没有该产线权限", nil)
 		return
 	}

@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -33,12 +34,25 @@ type formTemplateListItem struct {
 }
 
 func (s *Server) listFormTemplates(c *gin.Context) {
-	q := s.db.Model(&model.FormTemplate{})
-	if kind := c.Query("kind"); kind != "" {
-		q = q.Where("kind = ?", kind)
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
+	page, size := pageParams(c)
+	buildQuery := func() *gorm.DB {
+		q := scope.Filter(s.db.Model(&model.FormTemplate{}), "department_id")
+		if kind := c.Query("kind"); kind != "" {
+			q = q.Where("kind = ?", kind)
+		}
+		return q
+	}
+	var total int64
+	if err := buildQuery().Count(&total).Error; err != nil {
+		response.Fail(c, 500, "db_error", "查询模板失败", err.Error())
+		return
 	}
 	var templates []model.FormTemplate
-	if err := q.Order("id desc").Find(&templates).Error; err != nil {
+	if err := buildQuery().Preload("Department").Order("id desc").Offset((page - 1) * size).Limit(size).Find(&templates).Error; err != nil {
 		response.Fail(c, 500, "db_error", "查询模板失败", err.Error())
 		return
 	}
@@ -57,10 +71,19 @@ func (s *Server) listFormTemplates(c *gin.Context) {
 			CanDelete:       true,
 		})
 	}
-	response.OK(c, gin.H{"items": items})
+	response.OK(c, gin.H{"items": items, "total": total, "page": page, "size": size})
 }
 
 func (s *Server) createFormTemplate(c *gin.Context) {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
+	departmentID, err := scope.WritableDepartmentID(s.db)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "department_required", err.Error(), nil)
+		return
+	}
 	var req formTemplateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Fail(c, 400, "invalid_request", "参数错误", err.Error())
@@ -71,7 +94,7 @@ func (s *Server) createFormTemplate(c *gin.Context) {
 		response.Fail(c, 400, "validation_error", "表单结构错误", err.Error())
 		return
 	}
-	tpl := model.FormTemplate{Code: strings.TrimSpace(req.Code), Name: strings.TrimSpace(req.Name), Kind: req.Kind, CreatedBy: c.GetUint64("user_id")}
+	tpl := model.FormTemplate{DepartmentID: departmentID, Code: strings.TrimSpace(req.Code), Name: strings.TrimSpace(req.Name), Kind: req.Kind, CreatedBy: c.GetUint64("user_id")}
 	if tpl.Code == "" || tpl.Name == "" {
 		response.Fail(c, 400, "validation_error", "编码和名称不能为空", nil)
 		return
@@ -92,12 +115,16 @@ func (s *Server) createFormTemplate(c *gin.Context) {
 }
 
 func (s *Server) getFormTemplate(c *gin.Context) {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
 	id, ok := parseUint64(c, "id")
 	if !ok {
 		return
 	}
 	var tpl model.FormTemplate
-	if err := s.db.First(&tpl, id).Error; err != nil {
+	if err := scope.Filter(s.db.Preload("Department"), "department_id").First(&tpl, id).Error; err != nil {
 		response.Fail(c, 404, "not_found", "模板不存在", nil)
 		return
 	}
@@ -112,12 +139,20 @@ func (s *Server) getFormTemplate(c *gin.Context) {
 }
 
 func (s *Server) createFormVersion(c *gin.Context) {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
+	if _, err := scope.WritableDepartmentID(s.db); err != nil {
+		response.Fail(c, http.StatusBadRequest, "department_required", err.Error(), nil)
+		return
+	}
 	id, ok := parseUint64(c, "id")
 	if !ok {
 		return
 	}
 	var tpl model.FormTemplate
-	if err := s.db.First(&tpl, id).Error; err != nil {
+	if err := scope.Filter(s.db, "department_id").First(&tpl, id).Error; err != nil {
 		response.Fail(c, 404, "not_found", "模板不存在", nil)
 		return
 	}
@@ -146,6 +181,14 @@ func (s *Server) createFormVersion(c *gin.Context) {
 }
 
 func (s *Server) publishFormVersion(c *gin.Context) {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
+	if _, err := scope.WritableDepartmentID(s.db); err != nil {
+		response.Fail(c, http.StatusBadRequest, "department_required", err.Error(), nil)
+		return
+	}
 	id, ok := parseUint64(c, "id")
 	if !ok {
 		return
@@ -153,6 +196,11 @@ func (s *Server) publishFormVersion(c *gin.Context) {
 	var version model.FormVersion
 	if err := s.db.First(&version, id).Error; err != nil {
 		response.Fail(c, 404, "not_found", "版本不存在", nil)
+		return
+	}
+	var tpl model.FormTemplate
+	if err := scope.Filter(s.db, "department_id").First(&tpl, version.TemplateID).Error; err != nil {
+		response.Fail(c, http.StatusNotFound, "not_found", "版本不存在", nil)
 		return
 	}
 	var req struct {
@@ -164,6 +212,10 @@ func (s *Server) publishFormVersion(c *gin.Context) {
 			response.Fail(c, 500, "db_error", "查询模板已分配产线失败", err.Error())
 			return
 		}
+	}
+	if err := s.ensureLinesInDepartment(req.LineIDs, tpl.DepartmentID); err != nil {
+		response.Fail(c, http.StatusBadRequest, "validation_error", "产线不属于当前部门", nil)
+		return
 	}
 	now := time.Now()
 	err := s.db.Transaction(func(tx *gorm.DB) error {
@@ -196,6 +248,14 @@ func (s *Server) publishFormVersion(c *gin.Context) {
 }
 
 func (s *Server) rollbackFormVersion(c *gin.Context) {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
+	if _, err := scope.WritableDepartmentID(s.db); err != nil {
+		response.Fail(c, http.StatusBadRequest, "department_required", err.Error(), nil)
+		return
+	}
 	id, ok := parseUint64(c, "id")
 	if !ok {
 		return
@@ -205,11 +265,20 @@ func (s *Server) rollbackFormVersion(c *gin.Context) {
 		response.Fail(c, 404, "not_found", "版本不存在", nil)
 		return
 	}
+	var tpl model.FormTemplate
+	if err := scope.Filter(s.db, "department_id").First(&tpl, version.TemplateID).Error; err != nil {
+		response.Fail(c, http.StatusNotFound, "not_found", "版本不存在", nil)
+		return
+	}
 	var req struct {
 		LineIDs []uint64 `json:"lineIds"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || len(req.LineIDs) == 0 {
 		response.Fail(c, 400, "validation_error", "回滚必须选择产线", nil)
+		return
+	}
+	if err := s.ensureLinesInDepartment(req.LineIDs, tpl.DepartmentID); err != nil {
+		response.Fail(c, http.StatusBadRequest, "validation_error", "产线不属于当前部门", nil)
 		return
 	}
 	err := s.db.Transaction(func(tx *gorm.DB) error {
@@ -233,12 +302,20 @@ func (s *Server) rollbackFormVersion(c *gin.Context) {
 }
 
 func (s *Server) copyFormTemplate(c *gin.Context) {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
+	if _, err := scope.WritableDepartmentID(s.db); err != nil {
+		response.Fail(c, http.StatusBadRequest, "department_required", err.Error(), nil)
+		return
+	}
 	id, ok := parseUint64(c, "id")
 	if !ok {
 		return
 	}
 	var source model.FormTemplate
-	if err := s.db.First(&source, id).Error; err != nil {
+	if err := scope.Filter(s.db, "department_id").First(&source, id).Error; err != nil {
 		response.Fail(c, 404, "not_found", "模板不存在", nil)
 		return
 	}
@@ -259,7 +336,7 @@ func (s *Server) copyFormTemplate(c *gin.Context) {
 		response.Fail(c, 400, "validation_error", "源模板没有版本", nil)
 		return
 	}
-	target := model.FormTemplate{Code: strings.TrimSpace(req.Code), Name: strings.TrimSpace(req.Name), Kind: req.Kind, PairedTemplateID: &source.ID, CreatedBy: c.GetUint64("user_id")}
+	target := model.FormTemplate{DepartmentID: source.DepartmentID, Code: strings.TrimSpace(req.Code), Name: strings.TrimSpace(req.Name), Kind: req.Kind, PairedTemplateID: &source.ID, CreatedBy: c.GetUint64("user_id")}
 	err := s.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&target).Error; err != nil {
 			return err
@@ -277,13 +354,26 @@ func (s *Server) copyFormTemplate(c *gin.Context) {
 }
 
 func (s *Server) syncPairedTemplate(c *gin.Context) {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
+	if _, err := scope.WritableDepartmentID(s.db); err != nil {
+		response.Fail(c, http.StatusBadRequest, "department_required", err.Error(), nil)
+		return
+	}
 	id, ok := parseUint64(c, "id")
 	if !ok {
 		return
 	}
 	var source model.FormTemplate
-	if err := s.db.First(&source, id).Error; err != nil || source.PairedTemplateID == nil {
+	if err := scope.Filter(s.db, "department_id").First(&source, id).Error; err != nil || source.PairedTemplateID == nil {
 		response.Fail(c, 400, "validation_error", "模板没有配对模板", nil)
+		return
+	}
+	var paired model.FormTemplate
+	if err := scope.Filter(s.db, "department_id").First(&paired, *source.PairedTemplateID).Error; err != nil {
+		response.Fail(c, 400, "validation_error", "配对模板不存在或不属于当前部门", nil)
 		return
 	}
 	var sv model.FormVersion
@@ -302,7 +392,11 @@ func (s *Server) syncPairedTemplate(c *gin.Context) {
 }
 
 func (s *Server) executionLines(c *gin.Context) {
-	ids, err := s.authorizer.AllowedLines(c.GetUint64("user_id"))
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
+	ids, err := s.authorizer.AllowedLines(c.GetUint64("user_id"), scope.DepartmentID)
 	if err != nil {
 		response.Fail(c, 500, "db_error", "查询产线失败", err.Error())
 		return
@@ -312,16 +406,21 @@ func (s *Server) executionLines(c *gin.Context) {
 		response.OK(c, gin.H{"items": []model.Line{}})
 		return
 	}
-	if err := s.db.Where("id IN ? AND enabled = ?", ids, true).Order("level,id").Find(&lines).Error; err != nil {
+	if err := s.db.Where("id IN ? AND enabled = ?", ids, true).Order("level, code, id").Find(&lines).Error; err != nil {
 		response.Fail(c, 500, "db_error", "查询产线失败", err.Error())
 		return
 	}
+	sortLinesByDepartmentAndCode(lines)
 	response.OK(c, gin.H{"items": lines})
 }
 
 func (s *Server) executionForms(c *gin.Context) {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
 	lineID, _ := strconv.ParseUint(c.Query("lineId"), 10, 64)
-	if lineID == 0 || !s.canLine(c.GetUint64("user_id"), rbac.PermExecutionView, lineID) {
+	if lineID == 0 || !s.canLineInScope(scope, rbac.PermExecutionView, lineID) {
 		response.Fail(c, 403, "forbidden", "没有该产线权限", nil)
 		return
 	}
@@ -340,6 +439,10 @@ func (s *Server) executionForms(c *gin.Context) {
 }
 
 func (s *Server) executionFormDetail(c *gin.Context) {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
 	versionID, ok := parseUint64(c, "id")
 	if !ok {
 		return
@@ -350,7 +453,7 @@ func (s *Server) executionFormDetail(c *gin.Context) {
 		return
 	}
 	var tpl model.FormTemplate
-	if err := s.db.First(&tpl, version.TemplateID).Error; err != nil {
+	if err := scope.Filter(s.db, "department_id").First(&tpl, version.TemplateID).Error; err != nil {
 		response.Fail(c, 404, "not_found", "表单不存在", nil)
 		return
 	}
@@ -365,7 +468,15 @@ func parseRawSchema(raw json.RawMessage) (service.FormSchema, error) {
 }
 
 func (s *Server) executionShifts(c *gin.Context) {
-	plan, err := service.ActiveShiftPlan(s.db)
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
+	if scope.AllDepartments {
+		response.Fail(c, http.StatusBadRequest, "department_required", "请先选择部门", nil)
+		return
+	}
+	plan, err := service.ActiveShiftPlan(s.db, scope.DepartmentID)
 	if err != nil {
 		response.Fail(c, 500, "shift_unavailable", "未配置可用班次", err.Error())
 		return
@@ -379,10 +490,33 @@ func (s *Server) executionShifts(c *gin.Context) {
 }
 
 func (s *Server) repeatCheck(c *gin.Context) {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
 	lineID, _ := strconv.ParseUint(c.Query("lineId"), 10, 64)
 	shiftID, _ := strconv.ParseUint(c.Query("shiftPlanItemId"), 10, 64)
 	if lineID == 0 || shiftID == 0 || c.Query("businessDate") == "" {
 		response.Fail(c, 400, "validation_error", "缺少查询参数", nil)
+		return
+	}
+	if !s.canLineInScope(scope, rbac.PermExecutionView, lineID) {
+		response.Fail(c, http.StatusForbidden, "forbidden", "没有该产线权限", nil)
+		return
+	}
+	var shiftItem model.ShiftPlanItem
+	if err := s.db.First(&shiftItem, shiftID).Error; err != nil {
+		response.Fail(c, http.StatusBadRequest, "validation_error", "班次不存在", nil)
+		return
+	}
+	var plan model.ShiftPlan
+	if err := s.db.First(&plan, shiftItem.PlanID).Error; err != nil {
+		response.Fail(c, http.StatusBadRequest, "validation_error", "班次不存在", nil)
+		return
+	}
+	var line model.Line
+	if err := s.db.First(&line, lineID).Error; err != nil || line.DepartmentID != plan.DepartmentID {
+		response.Fail(c, http.StatusBadRequest, "validation_error", "产线和班次不属于同一部门", nil)
 		return
 	}
 	var count int64
@@ -410,20 +544,25 @@ type assignmentItemRequest struct {
 }
 
 func (s *Server) listTemplateAssignments(c *gin.Context) {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
 	id, ok := parseUint64(c, "id")
 	if !ok {
 		return
 	}
 	var template model.FormTemplate
-	if err := s.db.First(&template, id).Error; err != nil {
+	if err := scope.Filter(s.db, "department_id").First(&template, id).Error; err != nil {
 		response.Fail(c, 404, "not_found", "模板不存在", nil)
 		return
 	}
 	var lines []model.Line
-	if err := s.db.Where("enabled = ?", true).Order("level, id").Find(&lines).Error; err != nil {
+	if err := s.db.Where("department_id = ? AND enabled = ?", template.DepartmentID, true).Order("level, code, id").Find(&lines).Error; err != nil {
 		response.Fail(c, 500, "db_error", "查询产线失败", err.Error())
 		return
 	}
+	sortLinesByCode(lines)
 	var assignments []model.LineFormAssignment
 	_ = s.db.Where("template_id = ?", id).Find(&assignments).Error
 	assignmentByLine := map[uint64]model.LineFormAssignment{}
@@ -452,12 +591,20 @@ func (s *Server) listTemplateAssignments(c *gin.Context) {
 }
 
 func (s *Server) updateTemplateAssignments(c *gin.Context) {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
+	if _, err := scope.WritableDepartmentID(s.db); err != nil {
+		response.Fail(c, http.StatusBadRequest, "department_required", err.Error(), nil)
+		return
+	}
 	id, ok := parseUint64(c, "id")
 	if !ok {
 		return
 	}
 	var template model.FormTemplate
-	if err := s.db.First(&template, id).Error; err != nil {
+	if err := scope.Filter(s.db, "department_id").First(&template, id).Error; err != nil {
 		response.Fail(c, 404, "not_found", "模板不存在", nil)
 		return
 	}
@@ -487,6 +634,14 @@ func (s *Server) updateTemplateAssignments(c *gin.Context) {
 			response.Fail(c, 400, "validation_error", "只能分配给已发布版本", nil)
 			return
 		}
+	}
+	inputLineIDs := make([]uint64, 0, len(req.Items))
+	for _, item := range req.Items {
+		inputLineIDs = append(inputLineIDs, item.LineID)
+	}
+	if err := s.ensureLinesInDepartment(inputLineIDs, template.DepartmentID); err != nil {
+		response.Fail(c, http.StatusBadRequest, "validation_error", "产线不属于当前部门", nil)
+		return
 	}
 	expanded, err := s.expandAssignmentItems(req.Items)
 	if err != nil {

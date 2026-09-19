@@ -17,10 +17,14 @@ type ShiftSelection struct {
 	BusinessDate time.Time
 }
 
-func ActiveShiftPlan(db *gorm.DB) (*model.ShiftPlan, error) {
+func ActiveShiftPlan(db *gorm.DB, departmentID uint64) (*model.ShiftPlan, error) {
 	var plan model.ShiftPlan
-	err := db.Preload("Items", func(db *gorm.DB) *gorm.DB { return db.Order("sort_order asc, id asc") }).
-		Where("effective_at <= ?", time.Now()).Order("effective_at desc").First(&plan).Error
+	q := db.Preload("Items", func(db *gorm.DB) *gorm.DB { return db.Order("sort_order asc, id asc") }).
+		Where("effective_at <= ?", time.Now())
+	if departmentID > 0 {
+		q = q.Where("department_id = ?", departmentID)
+	}
+	err := q.Order("effective_at desc").First(&plan).Error
 	if err != nil {
 		return nil, err
 	}

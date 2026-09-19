@@ -7,11 +7,11 @@
         <p class="page-desc">维护账号、角色和登录权限。批量导入使用 Excel 模板，导入用户默认密码为 123456。</p>
       </div>
       <div class="page-actions">
-        <el-button @click="openImport">
+        <el-button :disabled="auth.allDepartments" @click="openImport">
           <el-icon><UploadFilled /></el-icon>
           批量导入
         </el-button>
-        <el-button type="primary" @click="openCreate">新增用户</el-button>
+        <el-button type="primary" :disabled="auth.allDepartments" @click="openCreate">新增用户</el-button>
       </div>
     </div>
 
@@ -20,12 +20,15 @@
       <el-select v-model="roleId" placeholder="角色" clearable style="width:180px">
         <el-option v-for="r in roles" :key="r.id" :label="r.name" :value="r.id" />
       </el-select>
-      <el-button type="primary" @click="load">查询</el-button>
+      <el-button type="primary" @click="search">查询</el-button>
     </div>
 
     <el-table :data="users" border>
       <el-table-column prop="account" label="工号" width="140" />
       <el-table-column prop="name" label="用户名" />
+      <el-table-column label="部门" width="160">
+        <template #default="{ row }">{{ row.department?.name || '全局' }}</template>
+      </el-table-column>
       <el-table-column label="角色" width="160">
         <template #default="{ row }">{{ row.role?.name }}</template>
       </el-table-column>
@@ -34,15 +37,16 @@
           <el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '启用' : '停用' }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="280">
+      <el-table-column label="操作" width="330">
         <template #default="{ row }">
-          <el-button link :disabled="row.id === auth.user?.id" @click="toggle(row)">{{ row.enabled ? '停用' : '启用' }}</el-button>
-          <el-button link @click="reset(row)">重置密码</el-button>
-          <el-button v-if="canChangeRole(row)" link type="danger" @click="changeRole(row)">修改角色</el-button>
+          <el-button link :disabled="auth.allDepartments || row.id === auth.user?.id" @click="toggle(row)">{{ row.enabled ? '停用' : '启用' }}</el-button>
+          <el-button link :disabled="auth.allDepartments" @click="reset(row)">重置密码</el-button>
+          <el-button v-if="canChangeRole(row)" link type="danger" :disabled="auth.allDepartments" @click="changeRole(row)">角色/部门</el-button>
           <el-tag v-else-if="row.id === auth.user?.id" size="small" type="info">本人</el-tag>
         </template>
       </el-table-column>
     </el-table>
+    <AppPagination v-model:page="page" v-model:size="size" :total="total" @change="load" />
 
     <el-dialog v-model="dialog" title="新增用户" width="420px">
       <el-form label-width="80px">
@@ -57,6 +61,11 @@
             <el-option v-for="r in roles" :key="r.id" :label="r.name" :value="r.id" />
           </el-select>
         </el-form-item>
+        <el-form-item v-if="auth.isSuperAdmin" label="部门">
+          <el-select v-model="form.departmentId" style="width:100%" placeholder="请选择部门">
+            <el-option v-for="department in auth.departments" :key="department.id" :label="department.name" :value="department.id" :disabled="!department.enabled" />
+          </el-select>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="dialog = false">取消</el-button>
@@ -64,12 +73,17 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="roleDialog" title="修改角色" width="420px">
+    <el-dialog v-model="roleDialog" title="修改角色与部门" width="460px">
       <div class="dialog-caption">用户：{{ roleTarget?.name }}（{{ roleTarget?.account }}）</div>
       <el-form label-width="80px">
         <el-form-item label="新角色">
           <el-select v-model="roleForm.roleId" style="width:100%" placeholder="请选择角色">
             <el-option v-for="r in roles" :key="r.id" :label="r.name" :value="r.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item v-if="auth.isSuperAdmin" label="所属部门">
+          <el-select v-model="roleForm.departmentId" style="width:100%" placeholder="请选择部门" :disabled="selectedRoleIsSuper">
+            <el-option v-for="department in auth.departments" :key="department.id" :label="department.name" :value="department.id" :disabled="!department.enabled" />
           </el-select>
         </el-form-item>
       </el-form>
@@ -87,7 +101,7 @@
         title="请按模板填写账号信息，每行一个用户。角色可以填写角色名称或编码，不填写时默认使用普通用户。"
       />
       <div class="import-format">
-        Excel 列顺序：<strong>工号</strong>、<strong>用户名</strong>、<strong>角色</strong>
+        Excel 列顺序：<strong>工号</strong>、<strong>用户名</strong>、<strong>角色</strong><template v-if="auth.isSuperAdmin">、<strong>部门</strong></template>
       </div>
       <el-upload
         ref="uploadRef"
@@ -121,14 +135,18 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
 import { api } from '@/api'
 import { useAuthStore } from '@/stores/auth'
+import AppPagination from '@/components/AppPagination.vue'
 
 const auth = useAuthStore()
 const users = ref<any[]>([])
+const page = ref(1)
+const size = ref(20)
+const total = ref(0)
 const roles = ref<any[]>([])
 const account = ref('')
 const roleId = ref<number>()
@@ -141,17 +159,22 @@ const importErrors = ref<any[]>([])
 const importing = ref(false)
 const uploadRef = ref<any>()
 
-const form = reactive({ account: '', name: '', roleId: 0 })
-const roleForm = reactive({ roleId: 0 })
+const form = reactive({ account: '', name: '', roleId: 0, departmentId: 0 })
+const roleForm = reactive({ roleId: 0, departmentId: 0 })
+const selectedRoleIsSuper = computed(() => roles.value.find(item => item.id === roleForm.roleId)?.code === 'super_admin')
 
 async function load() {
   try {
-    const { data } = await api.get('/admin/users', { params: { account: account.value, roleId: roleId.value || undefined } })
+    const { data } = await api.get('/admin/users', { params: { account: account.value, roleId: roleId.value || undefined, page: page.value, size: size.value } })
+    if (!data.items?.length && page.value > 1) { page.value -= 1; return load() }
     users.value = data.items
+    total.value = data.total || 0
   } catch (error: any) {
     ElMessage.error(error.message || '查询用户失败')
   }
 }
+
+function search() { page.value = 1; load() }
 
 async function loadRoles() {
   try {
@@ -166,12 +189,13 @@ function openCreate() {
   form.account = ''
   form.name = ''
   form.roleId = roles.value.find(r => r.code === 'normal')?.id || roles.value[0]?.id || 0
+  form.departmentId = auth.selectedDepartmentId || auth.departments.find(item => item.enabled)?.id || 0
   dialog.value = true
 }
 
 async function create() {
-  if (!form.account.trim() || !form.name.trim() || !form.roleId) {
-    ElMessage.warning('请填写工号、用户名和角色')
+  if (!form.account.trim() || !form.name.trim() || !form.roleId || (auth.isSuperAdmin && !form.departmentId && !selectedRoleIsSuper.value)) {
+    ElMessage.warning('请填写工号、用户名、角色和部门')
     return
   }
   try {
@@ -208,12 +232,13 @@ async function reset(row: any) {
 }
 
 function canChangeRole(row: any) {
-  return auth.user?.role.code === 'super_admin' && row.id !== auth.user?.id
+  return row.id !== auth.user?.id
 }
 
 function changeRole(row: any) {
   roleTarget.value = row
   roleForm.roleId = row.roleId || row.role?.id || 0
+  roleForm.departmentId = row.departmentId || row.department?.id || 0
   roleDialog.value = true
 }
 
@@ -223,7 +248,7 @@ async function saveRole() {
     return
   }
   try {
-    await api.patch(`/admin/users/${roleTarget.value.id}`, { roleId: roleForm.roleId })
+    await api.patch(`/admin/users/${roleTarget.value.id}`, { roleId: roleForm.roleId, departmentId: auth.isSuperAdmin ? roleForm.departmentId : undefined })
     roleDialog.value = false
     ElMessage.success('角色已修改')
     await load()

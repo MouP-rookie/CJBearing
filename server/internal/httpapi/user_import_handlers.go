@@ -24,25 +24,44 @@ type userImportRowError struct {
 }
 
 type userImportColumns struct {
-	account int
-	name    int
-	role    int
+	account    int
+	name       int
+	role       int
+	department int
 }
 
 func (s *Server) userImportTemplate(c *gin.Context) {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
 	f := excelize.NewFile()
 	sheet := "用户导入"
 	if err := f.SetSheetName("Sheet1", sheet); err != nil {
 		response.Fail(c, 500, "template_failed", "生成导入模板失败", err.Error())
 		return
 	}
-	_ = f.SetSheetRow(sheet, "A1", &[]any{"工号", "用户名", "角色"})
-	_ = f.SetSheetRow(sheet, "A2", &[]any{"10002", "张三", "普通用户"})
-	_ = f.SetColWidth(sheet, "A", "C", 20)
+	if scope.User.Role.Code == "super_admin" {
+		_ = f.SetSheetRow(sheet, "A1", &[]any{"工号", "用户名", "角色", "部门"})
+		_ = f.SetSheetRow(sheet, "A2", &[]any{"10002", "张三", "普通用户", "东港分厂"})
+		_ = f.SetColWidth(sheet, "A", "D", 20)
+	} else {
+		_ = f.SetSheetRow(sheet, "A1", &[]any{"工号", "用户名", "角色"})
+		_ = f.SetSheetRow(sheet, "A2", &[]any{"10002", "张三", "普通用户"})
+		_ = f.SetColWidth(sheet, "A", "C", 20)
+	}
 	writeWorkbook(c, f, "用户批量导入模板.xlsx")
 }
 
 func (s *Server) importUsers(c *gin.Context) {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
+	if scope.AllDepartments {
+		response.Fail(c, http.StatusBadRequest, "department_required", "请先选择部门", nil)
+		return
+	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, userImportMaxBytes)
 	fileHeader, err := c.FormFile("file")
 	if err != nil {
@@ -84,11 +103,7 @@ func (s *Server) importUsers(c *gin.Context) {
 		response.Fail(c, 400, "invalid_header", err.Error(), nil)
 		return
 	}
-	current, err := s.currentUser(c)
-	if err != nil {
-		response.Fail(c, 401, "unauthorized", "当前用户不存在", nil)
-		return
-	}
+	current := scope.User
 	normalRole, err := s.roleByCode("normal")
 	if err != nil {
 		response.Fail(c, 500, "seed_error", "系统普通用户角色不存在", err.Error())
@@ -111,6 +126,7 @@ func (s *Server) importUsers(c *gin.Context) {
 		account := userImportCell(row, columns.account)
 		name := userImportCell(row, columns.name)
 		roleValue := userImportCell(row, columns.role)
+		departmentValue := userImportCell(row, columns.department)
 		if account == "" {
 			rowErrors = append(rowErrors, userImportRowError{Row: rowNo, Account: account, Message: "工号不能为空"})
 			continue
@@ -128,8 +144,24 @@ func (s *Server) importUsers(c *gin.Context) {
 			}
 			role = resolved
 		}
-		if current.Role.Code != "super_admin" && role.Code != "normal" {
-			rowErrors = append(rowErrors, userImportRowError{Row: rowNo, Account: account, Message: "管理员只能导入普通用户"})
+		if role.Code == "super_admin" {
+			rowErrors = append(rowErrors, userImportRowError{Row: rowNo, Account: account, Message: "系统只允许一个超级管理员，不能导入超级管理员"})
+			continue
+		}
+		var requestedDepartmentID *uint64
+		if current.Role.Code == "super_admin" && role.Code != "super_admin" {
+			if departmentValue != "" {
+				department, departmentErr := s.departmentForImport(departmentValue)
+				if departmentErr != nil {
+					rowErrors = append(rowErrors, userImportRowError{Row: rowNo, Account: account, Message: "部门不存在：" + departmentValue})
+					continue
+				}
+				requestedDepartmentID = &department.ID
+			}
+		}
+		departmentID, departmentErr := s.resolveUserDepartment(scope, requestedDepartmentID, role.Code)
+		if departmentErr != nil {
+			rowErrors = append(rowErrors, userImportRowError{Row: rowNo, Account: account, Message: departmentErr.Error()})
 			continue
 		}
 		var existing model.User
@@ -140,7 +172,7 @@ func (s *Server) importUsers(c *gin.Context) {
 			rowErrors = append(rowErrors, userImportRowError{Row: rowNo, Account: account, Message: "检查账号失败"})
 			continue
 		}
-		user := model.User{Account: account, Name: name, PasswordHash: passwordHash, RoleID: role.ID, Enabled: true}
+		user := model.User{Account: account, Name: name, PasswordHash: passwordHash, DepartmentID: departmentID, RoleID: role.ID, Enabled: true}
 		if err := s.db.Create(&user).Error; err != nil {
 			rowErrors = append(rowErrors, userImportRowError{Row: rowNo, Account: account, Message: "创建失败：" + err.Error()})
 			continue
@@ -174,8 +206,18 @@ func (s *Server) importRole(value string) (*model.Role, error) {
 	return &role, err
 }
 
+func (s *Server) departmentForImport(value string) (*model.Department, error) {
+	value = strings.TrimSpace(value)
+	var department model.Department
+	if id, err := strconv.ParseUint(value, 10, 64); err == nil {
+		return &department, s.db.Where("id = ? AND enabled = ?", id, true).First(&department).Error
+	}
+	err := s.db.Where("enabled = ? AND (code = ? OR name = ?)", true, value, value).First(&department).Error
+	return &department, err
+}
+
 func parseUserImportHeader(row []string) (userImportColumns, error) {
-	columns := userImportColumns{account: -1, name: -1, role: -1}
+	columns := userImportColumns{account: -1, name: -1, role: -1, department: -1}
 	for i, value := range row {
 		switch normalizeUserImportHeader(value) {
 		case "工号", "账号", "用户账号", "account":
@@ -189,6 +231,10 @@ func parseUserImportHeader(row []string) (userImportColumns, error) {
 		case "角色", "角色名称", "角色编码", "角色编号", "role", "rolename", "rolecode", "roleid":
 			if columns.role < 0 {
 				columns.role = i
+			}
+		case "部门", "部门名称", "部门编码", "部门编号", "department", "departmentname", "departmentcode", "departmentid":
+			if columns.department < 0 {
+				columns.department = i
 			}
 		}
 	}

@@ -17,13 +17,16 @@ func NewAuthorizer(db *gorm.DB) *Authorizer { return &Authorizer{db: db} }
 
 func (a *Authorizer) Can(userID uint64, permission string, lineID *uint64) (bool, error) {
 	var user model.User
-	if err := a.db.Preload("Role").First(&user, userID).Error; err != nil {
+	if err := a.db.Preload("Role").Preload("Department").First(&user, userID).Error; err != nil {
 		return false, err
 	}
 	if !user.Enabled || user.DeletedAt.Valid {
 		return false, ErrForbidden
 	}
 	if user.Role.DeletedAt.Valid {
+		return false, ErrForbidden
+	}
+	if user.Role.Code != "super_admin" && (user.DepartmentID == nil || user.Department == nil || !user.Department.Enabled || user.Department.DeletedAt.Valid) {
 		return false, ErrForbidden
 	}
 	if user.Role.Code == "super_admin" {
@@ -40,6 +43,13 @@ func (a *Authorizer) Can(userID uint64, permission string, lineID *uint64) (bool
 	if lineID == nil {
 		return true, nil
 	}
+	var line model.Line
+	if err := a.db.First(&line, *lineID).Error; err != nil {
+		return false, err
+	}
+	if user.DepartmentID == nil || line.DepartmentID != *user.DepartmentID {
+		return false, nil
+	}
 	if user.Role.Code == "admin" || user.Role.Code == "normal" {
 		return true, nil
 	}
@@ -49,17 +59,27 @@ func (a *Authorizer) Can(userID uint64, permission string, lineID *uint64) (bool
 	return count > 0, err
 }
 
-func (a *Authorizer) AllowedLines(userID uint64) ([]uint64, error) {
+func (a *Authorizer) AllowedLines(userID uint64, requestedDepartmentID uint64) ([]uint64, error) {
 	var user model.User
-	if err := a.db.Preload("Role").First(&user, userID).Error; err != nil {
+	if err := a.db.Preload("Role").Preload("Department").First(&user, userID).Error; err != nil {
 		return nil, err
 	}
-	if user.Role.Code == "super_admin" || user.Role.Code == "admin" || user.Role.Code == "normal" {
-		var ids []uint64
-		err := a.db.Model(&model.Line{}).Where("enabled = ?", true).Pluck("id", &ids).Error
-		return ids, err
+	if user.Role.Code != "super_admin" {
+		if user.DepartmentID == nil || user.Department == nil || !user.Department.Enabled || user.Department.DeletedAt.Valid {
+			return []uint64{}, nil
+		}
+		requestedDepartmentID = *user.DepartmentID
 	}
 	var ids []uint64
-	err := a.db.Model(&model.RoleLineScope{}).Where("role_id = ?", user.RoleID).Pluck("line_id", &ids).Error
+	q := a.db.Model(&model.Line{}).Where("enabled = ? AND deleted_at IS NULL", true)
+	if requestedDepartmentID > 0 {
+		q = q.Where("department_id = ?", requestedDepartmentID)
+	}
+	if user.Role.Code == "super_admin" || user.Role.Code == "admin" || user.Role.Code == "normal" {
+		err := q.Pluck("id", &ids).Error
+		return ids, err
+	}
+	err := q.Joins("JOIN role_line_scopes rls ON rls.line_id = lines.id").
+		Where("rls.role_id = ?", user.RoleID).Pluck("lines.id", &ids).Error
 	return ids, err
 }

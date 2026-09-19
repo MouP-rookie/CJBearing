@@ -17,7 +17,7 @@
         <div class="quick-list">
           <button v-if="auth.can('form.view')" class="quick-item" @click="router.push('/forms')"><span class="quick-index">01</span><span><strong>配置任务与表单</strong><small>首末检、报表和登记表版本</small></span><el-icon><ArrowRight /></el-icon></button>
           <button v-if="auth.can('log.view')" class="quick-item" @click="router.push('/logs')"><span class="quick-index">02</span><span><strong>查看填报日志</strong><small>按产线、日期和版本追溯</small></span><el-icon><ArrowRight /></el-icon></button>
-          <button v-if="auth.can('backup.manage')" class="quick-item" @click="router.push('/backups')"><span class="quick-index">03</span><span><strong>生成数据库备份</strong><small>完整保存当前业务数据</small></span><el-icon><ArrowRight /></el-icon></button>
+          <button v-if="auth.can('backup.manage')" class="quick-item" @click="router.push('/backups')"><span class="quick-index">03</span><span><strong>{{ auth.allDepartments ? '生成完整数据库备份' : '生成本部门数据归档' }}</strong><small>{{ auth.allDepartments ? '仅超级管理员可用' : '只包含当前部门数据' }}</small></span><el-icon><ArrowRight /></el-icon></button>
         </div>
       </section>
 

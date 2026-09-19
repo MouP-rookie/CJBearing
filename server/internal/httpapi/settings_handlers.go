@@ -48,6 +48,19 @@ func (s *Server) getBrandSettings(c *gin.Context) {
 	response.OK(c, gin.H{"logoDataUrl": setting.Value, "updatedAt": setting.UpdatedAt})
 }
 
+func (s *Server) getScopedBrandSettings(c *gin.Context) {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
+	logo, err := s.readBrandLogo(scope.DepartmentID)
+	if err != nil {
+		response.Fail(c, 500, "db_error", "读取系统设置失败", err.Error())
+		return
+	}
+	response.OK(c, gin.H{"logoDataUrl": logo, "departmentId": scope.DepartmentID})
+}
+
 func (s *Server) updateBrandSettings(c *gin.Context) {
 	var req brandSettingsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -61,16 +74,33 @@ func (s *Server) updateBrandSettings(c *gin.Context) {
 			return
 		}
 	}
-	if err := s.saveAppSetting(brandLogoKey, req.LogoDataURL); err != nil {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
+	departmentID, err := scope.WritableDepartmentID(s.db)
+	if scope.AllDepartments {
+		departmentID = 0
+		err = nil
+	}
+	if err != nil {
+		response.Fail(c, 400, "department_required", err.Error(), nil)
+		return
+	}
+	if err := s.saveScopedSetting(departmentID, brandLogoKey, req.LogoDataURL); err != nil {
 		response.Fail(c, 500, "save_failed", "保存系统设置失败", err.Error())
 		return
 	}
-	s.audit(c, "app_setting", 0, "update_brand_logo", nil, gin.H{"hasLogo": req.LogoDataURL != ""})
+	s.audit(c, "app_setting", departmentID, "update_brand_logo", nil, gin.H{"hasLogo": req.LogoDataURL != "", "departmentId": departmentID})
 	response.OK(c, gin.H{"logoDataUrl": req.LogoDataURL, "updatedAt": time.Now()})
 }
 
 func (s *Server) getVoidReasons(c *gin.Context) {
-	items, err := s.readVoidReasons()
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
+	items, err := s.readVoidReasons(scope.DepartmentID)
 	if err != nil {
 		response.Fail(c, 500, "db_error", "读取废除原因失败", err.Error())
 		return
@@ -101,15 +131,94 @@ func (s *Server) updateVoidReasons(c *gin.Context) {
 		response.Fail(c, 500, "save_failed", "保存废除原因失败", err.Error())
 		return
 	}
-	if err := s.saveAppSetting(voidReasonsKey, string(raw)); err != nil {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
+	departmentID, scopeErr := scope.WritableDepartmentID(s.db)
+	if scope.AllDepartments {
+		departmentID = 0
+		scopeErr = nil
+	}
+	if scopeErr != nil {
+		response.Fail(c, 400, "department_required", scopeErr.Error(), nil)
+		return
+	}
+	if err := s.saveScopedSetting(departmentID, voidReasonsKey, string(raw)); err != nil {
 		response.Fail(c, 500, "save_failed", "保存废除原因失败", err.Error())
 		return
 	}
-	s.audit(c, "app_setting", 0, "update_void_reasons", nil, gin.H{"items": items})
+	s.audit(c, "app_setting", departmentID, "update_void_reasons", nil, gin.H{"items": items, "departmentId": departmentID})
 	response.OK(c, gin.H{"items": items, "updatedAt": time.Now()})
 }
 
-func (s *Server) readVoidReasons() ([]string, error) {
+func (s *Server) readVoidReasons(departmentID uint64) ([]string, error) {
+	raw, err := s.readScopedSetting(departmentID, voidReasonsKey)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(raw) == "" && departmentID > 0 {
+		raw, err = s.readScopedSetting(0, voidReasonsKey)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if strings.TrimSpace(raw) == "" {
+		return append([]string(nil), defaultVoidReasons...), nil
+	}
+	var items []string
+	if err := json.Unmarshal([]byte(raw), &items); err != nil {
+		return nil, fmt.Errorf("废除原因配置格式无效: %w", err)
+	}
+	return normalizeVoidReasons(items)
+}
+
+func (s *Server) readBrandLogo(departmentID uint64) (string, error) {
+	value, err := s.readScopedSetting(departmentID, brandLogoKey)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(value) != "" || departmentID == 0 {
+		return value, nil
+	}
+	return s.readScopedSetting(0, brandLogoKey)
+}
+
+func (s *Server) readScopedSetting(departmentID uint64, key string) (string, error) {
+	if departmentID == 0 {
+		var setting model.AppSetting
+		err := s.db.Where("key = ?", key).First(&setting).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return "", nil
+		}
+		return setting.Value, err
+	}
+	var setting model.DepartmentSetting
+	err := s.db.Where("department_id = ? AND key = ?", departmentID, key).First(&setting).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", nil
+	}
+	return setting.Value, err
+}
+
+func (s *Server) saveScopedSetting(departmentID uint64, key, value string) error {
+	if departmentID == 0 {
+		return s.saveAppSetting(key, value)
+	}
+	var setting model.DepartmentSetting
+	err := s.db.Where("department_id = ? AND key = ?", departmentID, key).First(&setting).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return s.db.Create(&model.DepartmentSetting{DepartmentID: departmentID, Key: key, Value: value, UpdatedAt: time.Now()}).Error
+	}
+	if err != nil {
+		return err
+	}
+	setting.Value = value
+	setting.UpdatedAt = time.Now()
+	return s.db.Save(&setting).Error
+}
+
+func (s *Server) readLegacyVoidReasons() ([]string, error) {
 	var setting model.AppSetting
 	err := s.db.Where("key = ?", voidReasonsKey).First(&setting).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) || (err == nil && strings.TrimSpace(setting.Value) == "") {

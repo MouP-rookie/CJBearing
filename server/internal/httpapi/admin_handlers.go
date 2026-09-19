@@ -26,7 +26,16 @@ func parseUint64(c *gin.Context, key string) (uint64, bool) {
 }
 
 func (s *Server) listUsers(c *gin.Context) {
-	query := s.db.Preload("Role")
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
+	query := s.db.Preload("Role").Preload("Department")
+	if scope.AllDepartments {
+		// Super administrators can inspect every department.
+	} else {
+		query = query.Where("department_id = ?", scope.DepartmentID)
+	}
 	if account := strings.TrimSpace(c.Query("account")); account != "" {
 		query = query.Where("account ILIKE ?", "%"+account+"%")
 	}
@@ -48,13 +57,22 @@ func (s *Server) listUsers(c *gin.Context) {
 }
 
 type userRequest struct {
-	Account string `json:"account"`
-	Name    string `json:"name"`
-	RoleID  uint64 `json:"roleId"`
-	Enabled *bool  `json:"enabled"`
+	Account      string  `json:"account"`
+	Name         string  `json:"name"`
+	RoleID       uint64  `json:"roleId"`
+	DepartmentID *uint64 `json:"departmentId"`
+	Enabled      *bool   `json:"enabled"`
 }
 
 func (s *Server) createUser(c *gin.Context) {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
+	if scope.AllDepartments {
+		response.Fail(c, http.StatusBadRequest, "department_required", "请先选择部门", nil)
+		return
+	}
 	var req userRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Fail(c, 400, "invalid_request", "参数错误", err.Error())
@@ -74,9 +92,13 @@ func (s *Server) createUser(c *gin.Context) {
 		response.Fail(c, 400, "validation_error", "角色不存在", nil)
 		return
 	}
-	current, _ := s.currentUser(c)
-	if current.Role.Code != "super_admin" && role.Code != "normal" {
-		response.Fail(c, http.StatusForbidden, "forbidden", "管理员只能创建普通用户", nil)
+	if role.Code == "super_admin" {
+		response.Fail(c, http.StatusForbidden, "super_admin_create_forbidden", "系统只允许一个超级管理员，不能创建或分配超级管理员角色", nil)
+		return
+	}
+	departmentID, err := s.resolveUserDepartment(scope, req.DepartmentID, role.Code)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "validation_error", err.Error(), nil)
 		return
 	}
 	hash, err := auth.HashPassword("123456")
@@ -88,7 +110,7 @@ func (s *Server) createUser(c *gin.Context) {
 	if req.Enabled != nil {
 		enabled = *req.Enabled
 	}
-	user := model.User{Account: req.Account, Name: req.Name, PasswordHash: hash, RoleID: req.RoleID, Enabled: enabled}
+	user := model.User{Account: req.Account, Name: req.Name, PasswordHash: hash, RoleID: req.RoleID, DepartmentID: departmentID, Enabled: enabled}
 	if err := s.db.Create(&user).Error; err != nil {
 		response.Fail(c, 409, "create_failed", "账号可能已存在", err.Error())
 		return
@@ -98,18 +120,30 @@ func (s *Server) createUser(c *gin.Context) {
 }
 
 func (s *Server) updateUser(c *gin.Context) {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
+	if scope.AllDepartments {
+		response.Fail(c, http.StatusBadRequest, "department_required", "请先选择部门", nil)
+		return
+	}
 	id, ok := parseUint64(c, "id")
 	if !ok {
 		return
 	}
 	var user model.User
-	if err := s.db.Preload("Role").First(&user, id).Error; err != nil {
+	query := s.db.Preload("Role").Preload("Department")
+	if !scope.AllDepartments {
+		query = query.Where("department_id = ?", scope.DepartmentID)
+	}
+	if err := query.First(&user, id).Error; err != nil {
 		response.Fail(c, 404, "not_found", "用户不存在", nil)
 		return
 	}
-	current, _ := s.currentUser(c)
-	if current.Role.Code != "super_admin" && user.Role.Code != "normal" {
-		response.Fail(c, 403, "forbidden", "管理员只能管理普通用户", nil)
+	current := scope.User
+	if current.Role.Code != "super_admin" && user.Role.Code == "super_admin" {
+		response.Fail(c, http.StatusNotFound, "not_found", "用户不存在", nil)
 		return
 	}
 	var req userRequest
@@ -121,24 +155,43 @@ func (s *Server) updateUser(c *gin.Context) {
 	if strings.TrimSpace(req.Name) != "" {
 		user.Name = strings.TrimSpace(req.Name)
 	}
+	nextRole := user.Role
 	if req.RoleID != 0 {
 		role, err := s.roleByID(req.RoleID)
 		if err != nil {
 			response.Fail(c, 400, "validation_error", "角色不存在", nil)
 			return
 		}
-		if current.Role.Code != "super_admin" && role.Code != "normal" {
-			response.Fail(c, 403, "forbidden", "管理员只能分配普通角色", nil)
+		if role.Code == "super_admin" {
+			response.Fail(c, http.StatusForbidden, "super_admin_assign_forbidden", "系统只允许一个超级管理员，不能创建或分配超级管理员角色", nil)
 			return
 		}
-		if current.Role.Code == "super_admin" && user.ID == current.ID && req.RoleID != user.RoleID {
+		if user.ID == current.ID && req.RoleID != user.RoleID {
 			response.Fail(c, 403, "self_role_forbidden", "不能修改自己的角色", nil)
 			return
 		}
+		nextRole = *role
 		user.RoleID = req.RoleID
 	}
+	if current.Role.Code == "super_admin" {
+		if nextRole.Code == "super_admin" {
+			user.DepartmentID = nil
+		} else if req.DepartmentID != nil || req.RoleID != 0 {
+			departmentID, err := s.resolveUserDepartment(scope, req.DepartmentID, nextRole.Code)
+			if err != nil {
+				response.Fail(c, http.StatusBadRequest, "validation_error", err.Error(), nil)
+				return
+			}
+			user.DepartmentID = departmentID
+		} else if user.DepartmentID == nil {
+			response.Fail(c, http.StatusBadRequest, "validation_error", "非超级管理员必须选择部门", nil)
+			return
+		}
+	} else {
+		user.DepartmentID = current.DepartmentID
+	}
 	if req.Enabled != nil {
-		if current.Role.Code == "super_admin" && user.ID == current.ID && !*req.Enabled {
+		if user.ID == current.ID && !*req.Enabled {
 			response.Fail(c, 403, "self_disable_forbidden", "不能停用当前登录账号", nil)
 			return
 		}
@@ -153,22 +206,34 @@ func (s *Server) updateUser(c *gin.Context) {
 }
 
 func (s *Server) resetUserPassword(c *gin.Context) {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
+	if scope.AllDepartments {
+		response.Fail(c, http.StatusBadRequest, "department_required", "请先选择部门", nil)
+		return
+	}
 	id, ok := parseUint64(c, "id")
 	if !ok {
 		return
 	}
 	var user model.User
-	if err := s.db.Preload("Role").First(&user, id).Error; err != nil {
+	query := s.db.Preload("Role").Preload("Department")
+	if !scope.AllDepartments {
+		query = query.Where("department_id = ?", scope.DepartmentID)
+	}
+	if err := query.First(&user, id).Error; err != nil {
 		response.Fail(c, 404, "not_found", "用户不存在", nil)
 		return
 	}
-	current, _ := s.currentUser(c)
+	current := scope.User
 	if user.Role.Code == "super_admin" && current.Role.Code != "super_admin" {
 		response.Fail(c, 403, "forbidden", "不能重置超级管理员密码", nil)
 		return
 	}
-	if current.Role.Code != "super_admin" && user.Role.Code != "normal" {
-		response.Fail(c, 403, "forbidden", "管理员只能重置普通用户密码", nil)
+	if current.Role.Code != "super_admin" && user.Role.Code == "super_admin" {
+		response.Fail(c, http.StatusNotFound, "not_found", "用户不存在", nil)
 		return
 	}
 	var req struct {
@@ -204,21 +269,41 @@ func (s *Server) listRoles(c *gin.Context) {
 }
 
 func (s *Server) listRoleOptions(c *gin.Context) {
-	current, err := s.currentUser(c)
-	if err != nil {
-		response.Fail(c, 401, "unauthorized", "当前用户不存在", nil)
-		return
-	}
 	q := s.db.Order("id")
-	if current.Role.Code != "super_admin" {
-		q = q.Where("code = ?", "normal")
-	}
+	q = q.Where("code <> ?", "super_admin")
 	var roles []model.Role
 	if err := q.Find(&roles).Error; err != nil {
 		response.Fail(c, 500, "db_error", "查询角色失败", err.Error())
 		return
 	}
 	response.OK(c, gin.H{"items": roles})
+}
+
+func (s *Server) resolveUserDepartment(scope *departmentScope, requested *uint64, roleCode string) (*uint64, error) {
+	if roleCode == "super_admin" {
+		return nil, fmt.Errorf("系统只允许一个超级管理员，不能创建或分配超级管理员角色")
+	}
+	if scope.User.Role.Code != "super_admin" {
+		if scope.User.DepartmentID == nil {
+			return nil, fmt.Errorf("当前管理员未绑定部门")
+		}
+		return scope.User.DepartmentID, nil
+	}
+	departmentID := scope.DepartmentID
+	if requested != nil && *requested > 0 {
+		departmentID = *requested
+	}
+	if departmentID == 0 {
+		return nil, fmt.Errorf("非超级管理员必须选择部门")
+	}
+	var department model.Department
+	if err := s.db.First(&department, departmentID).Error; err != nil {
+		return nil, fmt.Errorf("部门不存在")
+	}
+	if !department.Enabled || department.DeletedAt.Valid {
+		return nil, fmt.Errorf("部门已停用")
+	}
+	return &department.ID, nil
 }
 
 type roleRequest struct {
@@ -325,12 +410,54 @@ func (s *Server) roleByID(id uint64) (*model.Role, error) {
 }
 
 func (s *Server) listLines(c *gin.Context) {
-	var lines []model.Line
-	if err := s.db.Order("level, id").Find(&lines).Error; err != nil {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
+	page, size := pageParams(c)
+	var allRoots []model.Line
+	if err := scope.Filter(s.db.Preload("Department"), "department_id").Where("level = ?", 1).Find(&allRoots).Error; err != nil {
 		response.Fail(c, 500, "db_error", "查询产线失败", err.Error())
 		return
 	}
-	response.OK(c, gin.H{"items": lines})
+	sortLinesByDepartmentAndCode(allRoots)
+	total := int64(len(allRoots))
+	start := (page - 1) * size
+	if start > len(allRoots) {
+		start = len(allRoots)
+	}
+	end := start + size
+	if end > len(allRoots) {
+		end = len(allRoots)
+	}
+	roots := allRoots[start:end]
+	items := append([]model.Line(nil), roots...)
+	if len(roots) > 0 {
+		rootIDs := make([]uint64, 0, len(roots))
+		rootByID := make(map[uint64]model.Line, len(roots))
+		for _, root := range roots {
+			rootIDs = append(rootIDs, root.ID)
+			rootByID[root.ID] = root
+		}
+		var children []model.Line
+		if err := s.db.Preload("Department").Where("parent_id IN ?", rootIDs).Order("parent_id, code, id").Find(&children).Error; err != nil {
+			response.Fail(c, 500, "db_error", "查询子产线失败", err.Error())
+			return
+		}
+		filtered := children[:0]
+		for _, child := range children {
+			if child.ParentID == nil {
+				continue
+			}
+			if root, ok := rootByID[*child.ParentID]; ok && root.DepartmentID == child.DepartmentID {
+				filtered = append(filtered, child)
+			}
+		}
+		children = filtered
+		sortLinesByCode(children)
+		items = append(items, children...)
+	}
+	response.OK(c, gin.H{"items": items, "total": total, "page": page, "size": size})
 }
 
 type lineRequest struct {
@@ -341,6 +468,15 @@ type lineRequest struct {
 }
 
 func (s *Server) createLine(c *gin.Context) {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
+	departmentID, err := scope.WritableDepartmentID(s.db)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "department_required", err.Error(), nil)
+		return
+	}
 	var req lineRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Fail(c, 400, "invalid_request", "参数错误", err.Error())
@@ -349,7 +485,7 @@ func (s *Server) createLine(c *gin.Context) {
 	level := 1
 	if req.ParentID != nil {
 		var parent model.Line
-		if err := s.db.First(&parent, *req.ParentID).Error; err != nil {
+		if err := s.db.Where("department_id = ?", departmentID).First(&parent, *req.ParentID).Error; err != nil {
 			response.Fail(c, 400, "validation_error", "父产线不存在", nil)
 			return
 		}
@@ -363,7 +499,7 @@ func (s *Server) createLine(c *gin.Context) {
 	if req.Enabled != nil {
 		enabled = *req.Enabled
 	}
-	line := model.Line{Code: strings.TrimSpace(req.Code), Name: strings.TrimSpace(req.Name), ParentID: req.ParentID, Level: level, Enabled: enabled}
+	line := model.Line{DepartmentID: departmentID, Code: strings.TrimSpace(req.Code), Name: strings.TrimSpace(req.Name), ParentID: req.ParentID, Level: level, Enabled: enabled}
 	if err := s.db.Create(&line).Error; err != nil {
 		response.Fail(c, 409, "create_failed", "产线编码可能已存在", err.Error())
 		return
@@ -373,12 +509,20 @@ func (s *Server) createLine(c *gin.Context) {
 }
 
 func (s *Server) updateLine(c *gin.Context) {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
+	if _, err := scope.WritableDepartmentID(s.db); err != nil {
+		response.Fail(c, http.StatusBadRequest, "department_required", err.Error(), nil)
+		return
+	}
 	id, ok := parseUint64(c, "id")
 	if !ok {
 		return
 	}
 	var line model.Line
-	if err := s.db.First(&line, id).Error; err != nil {
+	if err := scope.Filter(s.db, "department_id").First(&line, id).Error; err != nil {
 		response.Fail(c, 404, "not_found", "产线不存在", nil)
 		return
 	}
@@ -403,12 +547,25 @@ func (s *Server) updateLine(c *gin.Context) {
 }
 
 func (s *Server) deleteLine(c *gin.Context) {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
+	if _, err := scope.WritableDepartmentID(s.db); err != nil {
+		response.Fail(c, http.StatusBadRequest, "department_required", err.Error(), nil)
+		return
+	}
 	id, ok := parseUint64(c, "id")
 	if !ok {
 		return
 	}
+	var line model.Line
+	if err := scope.Filter(s.db, "department_id").First(&line, id).Error; err != nil {
+		response.Fail(c, http.StatusNotFound, "not_found", "产线不存在", nil)
+		return
+	}
 	var children int64
-	s.db.Model(&model.Line{}).Where("parent_id = ?", id).Count(&children)
+	s.db.Model(&model.Line{}).Where("department_id = ? AND parent_id = ?", line.DepartmentID, id).Count(&children)
 	if children > 0 {
 		response.Fail(c, 409, "has_children", "请先删除或停用子产线", nil)
 		return
@@ -427,12 +584,23 @@ func (s *Server) deleteLine(c *gin.Context) {
 }
 
 func (s *Server) listShiftPlans(c *gin.Context) {
-	var plans []model.ShiftPlan
-	if err := s.db.Preload("Items", func(db *gorm.DB) *gorm.DB { return db.Order("sort_order, id") }).Order("effective_at desc").Find(&plans).Error; err != nil {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
+	page, size := pageParams(c)
+	var total int64
+	if err := scope.Filter(s.db.Model(&model.ShiftPlan{}), "department_id").Count(&total).Error; err != nil {
 		response.Fail(c, 500, "db_error", "查询班次失败", err.Error())
 		return
 	}
-	response.OK(c, gin.H{"items": plans})
+	var plans []model.ShiftPlan
+	if err := scope.Filter(s.db.Preload("Department").Preload("Items", func(db *gorm.DB) *gorm.DB { return db.Order("sort_order, id") }), "department_id").
+		Order("department_id, effective_at desc").Offset((page - 1) * size).Limit(size).Find(&plans).Error; err != nil {
+		response.Fail(c, 500, "db_error", "查询班次失败", err.Error())
+		return
+	}
+	response.OK(c, gin.H{"items": plans, "total": total, "page": page, "size": size})
 }
 
 type shiftPlanRequest struct {
@@ -450,12 +618,21 @@ type shiftItemRequest struct {
 }
 
 func (s *Server) createShiftPlan(c *gin.Context) {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
+	departmentID, err := scope.WritableDepartmentID(s.db)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "department_required", err.Error(), nil)
+		return
+	}
 	var req shiftPlanRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Fail(c, 400, "invalid_request", "参数错误", err.Error())
 		return
 	}
-	plan, err := buildShiftPlan(req, c.GetUint64("user_id"))
+	plan, err := buildShiftPlan(req, c.GetUint64("user_id"), departmentID)
 	if err != nil {
 		response.Fail(c, 400, "validation_error", err.Error(), nil)
 		return
@@ -469,12 +646,20 @@ func (s *Server) createShiftPlan(c *gin.Context) {
 }
 
 func (s *Server) updateShiftPlan(c *gin.Context) {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
+	if _, err := scope.WritableDepartmentID(s.db); err != nil {
+		response.Fail(c, http.StatusBadRequest, "department_required", err.Error(), nil)
+		return
+	}
 	id, ok := parseUint64(c, "id")
 	if !ok {
 		return
 	}
 	var existing model.ShiftPlan
-	if err := s.db.First(&existing, id).Error; err != nil {
+	if err := scope.Filter(s.db, "department_id").First(&existing, id).Error; err != nil {
 		response.Fail(c, 404, "not_found", "班次计划不存在", nil)
 		return
 	}
@@ -483,7 +668,7 @@ func (s *Server) updateShiftPlan(c *gin.Context) {
 		response.Fail(c, 400, "invalid_request", "参数错误", err.Error())
 		return
 	}
-	replacement, err := buildShiftPlan(req, c.GetUint64("user_id"))
+	replacement, err := buildShiftPlan(req, c.GetUint64("user_id"), existing.DepartmentID)
 	if err != nil {
 		response.Fail(c, 400, "validation_error", err.Error(), nil)
 		return
@@ -503,12 +688,20 @@ func (s *Server) updateShiftPlan(c *gin.Context) {
 }
 
 func (s *Server) deleteShiftPlan(c *gin.Context) {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
+	if _, err := scope.WritableDepartmentID(s.db); err != nil {
+		response.Fail(c, http.StatusBadRequest, "department_required", err.Error(), nil)
+		return
+	}
 	id, ok := parseUint64(c, "id")
 	if !ok {
 		return
 	}
 	var plan model.ShiftPlan
-	if err := s.db.First(&plan, id).Error; err != nil {
+	if err := scope.Filter(s.db, "department_id").First(&plan, id).Error; err != nil {
 		response.Fail(c, 404, "not_found", "班次计划不存在", nil)
 		return
 	}
@@ -520,7 +713,7 @@ func (s *Server) deleteShiftPlan(c *gin.Context) {
 	response.NoContent(c)
 }
 
-func buildShiftPlan(req shiftPlanRequest, userID uint64) (*model.ShiftPlan, error) {
+func buildShiftPlan(req shiftPlanRequest, userID, departmentID uint64) (*model.ShiftPlan, error) {
 	if len(req.Items) == 0 {
 		return nil, fmt.Errorf("至少配置一个班次")
 	}
@@ -533,7 +726,7 @@ func buildShiftPlan(req shiftPlanRequest, userID uint64) (*model.ShiftPlan, erro
 		}
 		effective = parsed
 	}
-	plan := &model.ShiftPlan{Name: strings.TrimSpace(req.Name), EffectiveAt: effective, CreatedBy: userID}
+	plan := &model.ShiftPlan{DepartmentID: departmentID, Name: strings.TrimSpace(req.Name), EffectiveAt: effective, CreatedBy: userID}
 	if plan.Name == "" {
 		plan.Name = "班次计划"
 	}
@@ -566,7 +759,11 @@ func pageParams(c *gin.Context) (int, int) {
 func (s *Server) audit(c *gin.Context, entity string, id uint64, action string, before, after any) {
 	beforeJSON := mustJSON(before)
 	afterJSON := mustJSON(after)
-	_ = s.db.Create(&model.AuditLog{EntityType: entity, EntityID: id, Action: action, BeforeJSON: beforeJSON, AfterJSON: afterJSON, ActorID: c.GetUint64("user_id"), IP: c.ClientIP(), RequestID: c.GetString("request_id")}).Error
+	var departmentID *uint64
+	if id := c.GetUint64("scope_department_id"); id > 0 {
+		departmentID = &id
+	}
+	_ = s.db.Create(&model.AuditLog{DepartmentID: departmentID, EntityType: entity, EntityID: id, Action: action, BeforeJSON: beforeJSON, AfterJSON: afterJSON, ActorID: c.GetUint64("user_id"), IP: c.ClientIP(), RequestID: c.GetString("request_id")}).Error
 }
 
 func mustJSON(v any) []byte {

@@ -26,7 +26,7 @@ func (s *Server) pcLogin(c *gin.Context) {
 		return
 	}
 	user, err := s.findUserByAccount(strings.TrimSpace(req.Account))
-	if err != nil || !user.Enabled || user.Role.DeletedAt.Valid || !user.Role.AllowPC {
+	if err != nil || !user.Enabled || user.Role.DeletedAt.Valid || !user.Role.AllowPC || !s.userDepartmentEnabled(user) {
 		response.Fail(c, http.StatusUnauthorized, "login_failed", "账号或密码错误", nil)
 		return
 	}
@@ -48,7 +48,7 @@ func (s *Server) pdaLogin(c *gin.Context) {
 		return
 	}
 	user, err := s.findUserByAccount(strings.TrimSpace(req.Account))
-	if err != nil || !user.Enabled || user.Role.DeletedAt.Valid || !user.Role.AllowPDA {
+	if err != nil || !user.Enabled || user.Role.DeletedAt.Valid || !user.Role.AllowPDA || !s.userDepartmentEnabled(user) {
 		response.Fail(c, http.StatusUnauthorized, "login_failed", "账号不存在或已停用", nil)
 		return
 	}
@@ -77,19 +77,39 @@ func (s *Server) logout(c *gin.Context) {
 }
 
 func (s *Server) me(c *gin.Context) {
-	user, err := s.currentUser(c)
-	if err != nil {
-		response.Fail(c, http.StatusUnauthorized, "unauthorized", "用户不存在或已停用", nil)
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
 		return
 	}
+	user := scope.User
 	perms, _ := s.userPermissions(user)
-	lines, _ := s.authorizer.AllowedLines(user.ID)
-	response.OK(c, gin.H{"user": publicUser(user), "permissions": perms, "lineIds": lines, "client": c.GetString("client")})
+	lines, _ := s.authorizer.AllowedLines(user.ID, scope.DepartmentID)
+	var departments []model.Department
+	if user.Role.Code == "super_admin" {
+		_ = s.db.Order("code, id").Find(&departments).Error
+	}
+	logo, _ := s.readBrandLogo(scope.DepartmentID)
+	response.OK(c, gin.H{
+		"user": publicUser(user), "permissions": perms, "lineIds": lines,
+		"client": c.GetString("client"), "isSuperAdmin": user.Role.Code == "super_admin",
+		"departments": departments, "selectedDepartmentId": scope.DepartmentID,
+		"brandLogoDataUrl": logo,
+	})
+}
+
+func (s *Server) userDepartmentEnabled(user *model.User) bool {
+	if user.Role.Code == "super_admin" {
+		return true
+	}
+	if user.DepartmentID == nil || user.Department == nil || !user.Department.Enabled || user.Department.DeletedAt.Valid {
+		return false
+	}
+	return true
 }
 
 func (s *Server) findUserByAccount(account string) (*model.User, error) {
 	var user model.User
-	err := s.db.Preload("Role").Where("account = ?", account).First(&user).Error
+	err := s.db.Preload("Role").Preload("Department").Where("account = ?", account).First(&user).Error
 	return &user, err
 }
 
@@ -105,5 +125,5 @@ func (s *Server) userPermissions(user *model.User) ([]string, error) {
 }
 
 func publicUser(user *model.User) gin.H {
-	return gin.H{"id": user.ID, "account": user.Account, "name": user.Name, "enabled": user.Enabled, "role": user.Role}
+	return gin.H{"id": user.ID, "account": user.Account, "name": user.Name, "enabled": user.Enabled, "role": user.Role, "departmentId": user.DepartmentID, "department": user.Department}
 }

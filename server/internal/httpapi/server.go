@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"errors"
 	"net/http"
 	"time"
 
@@ -51,7 +52,12 @@ func (s *Server) Router() *gin.Engine {
 	pc.Use(middleware.RequireClient(auth.ClientPC))
 
 	pc.PUT("/settings/brand", middleware.RequirePermission(s.authorizer, rbac.PermSystemManage), s.updateBrandSettings)
+	pc.GET("/settings/brand", middleware.RequirePermission(s.authorizer, rbac.PermSystemManage), s.getScopedBrandSettings)
 	pc.PUT("/settings/void-reasons", s.updateVoidReasons)
+	pc.GET("/departments", middleware.RequirePermission(s.authorizer, rbac.PermDepartmentManage), s.listDepartments)
+	pc.POST("/departments", middleware.RequirePermission(s.authorizer, rbac.PermDepartmentManage), s.createDepartment)
+	pc.PATCH("/departments/:id", middleware.RequirePermission(s.authorizer, rbac.PermDepartmentManage), s.updateDepartment)
+	pc.DELETE("/departments/:id", middleware.RequirePermission(s.authorizer, rbac.PermDepartmentManage), s.deleteDepartment)
 	pc.GET("/users", middleware.RequirePermission(s.authorizer, rbac.PermUserManage), s.listUsers)
 	pc.POST("/users", middleware.RequirePermission(s.authorizer, rbac.PermUserManage), s.createUser)
 	pc.GET("/users/import-template", middleware.RequirePermission(s.authorizer, rbac.PermUserManage), s.userImportTemplate)
@@ -64,6 +70,8 @@ func (s *Server) Router() *gin.Engine {
 	pc.PATCH("/roles/:id", middleware.RequirePermission(s.authorizer, rbac.PermRoleManage), s.updateRole)
 
 	pc.GET("/lines", middleware.RequirePermission(s.authorizer, rbac.PermLineManage), s.listLines)
+	pc.GET("/lines/import-template", middleware.RequirePermission(s.authorizer, rbac.PermLineManage), s.lineImportTemplate)
+	pc.POST("/lines/import", middleware.RequirePermission(s.authorizer, rbac.PermLineManage), s.importLines)
 	pc.POST("/lines", middleware.RequirePermission(s.authorizer, rbac.PermLineManage), s.createLine)
 	pc.PATCH("/lines/:id", middleware.RequirePermission(s.authorizer, rbac.PermLineManage), s.updateLine)
 	pc.DELETE("/lines/:id", middleware.RequirePermission(s.authorizer, rbac.PermLineManage), s.deleteLine)
@@ -99,6 +107,7 @@ func (s *Server) Router() *gin.Engine {
 	pc.POST("/exports", middleware.RequirePermission(s.authorizer, rbac.PermExport), s.exportData)
 	pc.GET("/backups", middleware.RequirePermission(s.authorizer, rbac.PermBackupManage), s.listBackups)
 	pc.POST("/backups", middleware.RequirePermission(s.authorizer, rbac.PermBackupManage), s.createBackup)
+	pc.POST("/backups/restore", middleware.RequirePermission(s.authorizer, rbac.PermBackupManage), s.restoreBackup)
 	pc.GET("/backups/:id/download", middleware.RequirePermission(s.authorizer, rbac.PermBackupManage), s.downloadBackup)
 	pc.GET("/instrument-messages", middleware.RequirePermission(s.authorizer, rbac.PermLogView), s.listInstrumentMessages)
 
@@ -128,7 +137,7 @@ func corsMiddleware() gin.HandlerFunc {
 		if origin != "" {
 			c.Header("Access-Control-Allow-Origin", origin)
 			c.Header("Access-Control-Allow-Credentials", "true")
-			c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Request-ID")
+			c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Request-ID, X-Department-ID")
 			c.Header("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS")
 		}
 		if c.Request.Method == http.MethodOptions {
@@ -141,8 +150,17 @@ func corsMiddleware() gin.HandlerFunc {
 
 func (s *Server) currentUser(c *gin.Context) (*model.User, error) {
 	var user model.User
-	err := s.db.Preload("Role").First(&user, c.GetUint64("user_id")).Error
-	return &user, err
+	err := s.db.Preload("Role").Preload("Department").First(&user, c.GetUint64("user_id")).Error
+	if err != nil {
+		return &user, err
+	}
+	if !user.Enabled || user.DeletedAt.Valid || user.Role.DeletedAt.Valid {
+		return &user, errors.New("user disabled")
+	}
+	if user.Role.Code != "super_admin" && (user.DepartmentID == nil || user.Department == nil || !user.Department.Enabled || user.Department.DeletedAt.Valid) {
+		return &user, errors.New("department disabled")
+	}
+	return &user, nil
 }
 
 func (s *Server) canLine(userID uint64, permission string, lineID uint64) bool {

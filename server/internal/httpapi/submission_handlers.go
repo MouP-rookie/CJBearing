@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -44,13 +45,22 @@ type submissionRequest struct {
 }
 
 func (s *Server) createSubmission(c *gin.Context) {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
+	departmentID, scopeErr := scope.WritableDepartmentID(s.db)
+	if scopeErr != nil {
+		response.Fail(c, http.StatusBadRequest, "department_required", scopeErr.Error(), nil)
+		return
+	}
 	var req submissionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Fail(c, 400, "invalid_request", "参数错误", err.Error())
 		return
 	}
 	uid := c.GetUint64("user_id")
-	if !s.canLine(uid, rbac.PermExecutionFill, req.LineID) {
+	if !s.canLineInScope(scope, rbac.PermExecutionFill, req.LineID) {
 		response.Fail(c, 403, "forbidden", "没有该产线权限", nil)
 		return
 	}
@@ -64,13 +74,32 @@ func (s *Server) createSubmission(c *gin.Context) {
 		return
 	}
 	var tpl model.FormTemplate
-	if err := s.db.First(&tpl, req.TemplateID).Error; err != nil {
+	if err := s.db.Where("department_id = ?", departmentID).First(&tpl, req.TemplateID).Error; err != nil {
 		response.Fail(c, 404, "not_found", "模板不存在", nil)
 		return
 	}
 	var shift model.ShiftPlanItem
 	if err := s.db.First(&shift, req.ShiftPlanItemID).Error; err != nil {
 		response.Fail(c, 400, "validation_error", "班次不存在", nil)
+		return
+	}
+	var shiftPlan model.ShiftPlan
+	if err := s.db.Where("department_id = ?", departmentID).First(&shiftPlan, shift.PlanID).Error; err != nil {
+		response.Fail(c, http.StatusBadRequest, "validation_error", "班次不属于当前部门", nil)
+		return
+	}
+	if err := s.ensureLinesInDepartment([]uint64{req.LineID}, departmentID); err != nil {
+		response.Fail(c, http.StatusForbidden, "forbidden", "没有该产线权限", nil)
+		return
+	}
+	operatorIDs := make([]uint64, 0, len(req.Rows))
+	for _, rowInput := range req.Rows {
+		if rowInput.OperatorID != 0 {
+			operatorIDs = append(operatorIDs, rowInput.OperatorID)
+		}
+	}
+	if err := s.ensureUsersInDepartment(operatorIDs, departmentID); err != nil {
+		response.Fail(c, http.StatusBadRequest, "validation_error", "操作人员不属于当前部门", nil)
 		return
 	}
 	businessDate, err := service.ParseBusinessTime(req.BusinessDate)
@@ -92,7 +121,7 @@ func (s *Server) createSubmission(c *gin.Context) {
 	submittedAt := time.Now()
 	var created model.Submission
 	err = s.db.Transaction(func(tx *gorm.DB) error {
-		created = model.Submission{TemplateID: req.TemplateID, VersionID: req.VersionID, LineID: req.LineID, BusinessDate: businessDate, ShiftPlanItemID: shift.ID, ShiftNameSnapshot: shift.Name, ShiftStartSnapshot: shift.StartTime, ShiftEndSnapshot: shift.EndTime, RepeatReason: strings.TrimSpace(req.RepeatReason), Source: req.Source, ClientTime: req.ClientTime, CreatedBy: uid, SubmittedAt: submittedAt}
+		created = model.Submission{DepartmentID: departmentID, TemplateID: req.TemplateID, VersionID: req.VersionID, LineID: req.LineID, BusinessDate: businessDate, ShiftPlanItemID: shift.ID, ShiftNameSnapshot: shift.Name, ShiftStartSnapshot: shift.StartTime, ShiftEndSnapshot: shift.EndTime, RepeatReason: strings.TrimSpace(req.RepeatReason), Source: req.Source, ClientTime: req.ClientTime, CreatedBy: uid, SubmittedAt: submittedAt}
 		if created.Source == "" {
 			created.Source = "online"
 		}
@@ -130,8 +159,12 @@ func (s *Server) createSubmission(c *gin.Context) {
 }
 
 func (s *Server) listSubmissions(c *gin.Context) {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
 	lineID, _ := strconv.ParseUint(c.Query("lineId"), 10, 64)
-	if lineID == 0 || !s.canLine(c.GetUint64("user_id"), rbac.PermExecutionView, lineID) {
+	if lineID == 0 || !s.canLineInScope(scope, rbac.PermExecutionView, lineID) {
 		response.Fail(c, 403, "forbidden", "没有该产线权限", nil)
 		return
 	}
@@ -160,6 +193,15 @@ func (s *Server) listSubmissions(c *gin.Context) {
 }
 
 func (s *Server) updateSubmissionRow(c *gin.Context) {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
+	departmentID, scopeErr := scope.WritableDepartmentID(s.db)
+	if scopeErr != nil {
+		response.Fail(c, 400, "department_required", scopeErr.Error(), nil)
+		return
+	}
 	id, ok := parseUint64(c, "id")
 	if !ok {
 		return
@@ -172,6 +214,10 @@ func (s *Server) updateSubmissionRow(c *gin.Context) {
 	var sub model.Submission
 	if err := s.db.First(&sub, row.SubmissionID).Error; err != nil {
 		response.Fail(c, 404, "not_found", "填报不存在", nil)
+		return
+	}
+	if sub.DepartmentID != departmentID {
+		response.Fail(c, 404, "not_found", "明细不存在", nil)
 		return
 	}
 	uid := c.GetUint64("user_id")
@@ -208,6 +254,15 @@ func (s *Server) updateSubmissionRow(c *gin.Context) {
 }
 
 func (s *Server) voidSubmissionRow(c *gin.Context) {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
+	departmentID, scopeErr := scope.WritableDepartmentID(s.db)
+	if scopeErr != nil {
+		response.Fail(c, 400, "department_required", scopeErr.Error(), nil)
+		return
+	}
 	id, ok := parseUint64(c, "id")
 	if !ok {
 		return
@@ -220,6 +275,10 @@ func (s *Server) voidSubmissionRow(c *gin.Context) {
 	var sub model.Submission
 	if err := s.db.First(&sub, row.SubmissionID).Error; err != nil {
 		response.Fail(c, 404, "not_found", "填报不存在", nil)
+		return
+	}
+	if sub.DepartmentID != departmentID {
+		response.Fail(c, 404, "not_found", "明细不存在", nil)
 		return
 	}
 	uid := c.GetUint64("user_id")
@@ -261,6 +320,15 @@ func (s *Server) voidSubmissionRow(c *gin.Context) {
 }
 
 func (s *Server) restoreSubmissionRow(c *gin.Context) {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
+	departmentID, scopeErr := scope.WritableDepartmentID(s.db)
+	if scopeErr != nil {
+		response.Fail(c, 400, "department_required", scopeErr.Error(), nil)
+		return
+	}
 	id, ok := parseUint64(c, "id")
 	if !ok {
 		return
@@ -273,6 +341,10 @@ func (s *Server) restoreSubmissionRow(c *gin.Context) {
 	var sub model.Submission
 	if err := s.db.First(&sub, row.SubmissionID).Error; err != nil {
 		response.Fail(c, 404, "not_found", "填报不存在", nil)
+		return
+	}
+	if sub.DepartmentID != departmentID {
+		response.Fail(c, 404, "not_found", "明细不存在", nil)
 		return
 	}
 	uid := c.GetUint64("user_id")
@@ -314,12 +386,25 @@ func (s *Server) restoreSubmissionRow(c *gin.Context) {
 }
 
 func (s *Server) voidSubmission(c *gin.Context) {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
+	departmentID, scopeErr := scope.WritableDepartmentID(s.db)
+	if scopeErr != nil {
+		response.Fail(c, 400, "department_required", scopeErr.Error(), nil)
+		return
+	}
 	id, ok := parseUint64(c, "id")
 	if !ok {
 		return
 	}
 	var sub model.Submission
 	if err := s.db.First(&sub, id).Error; err != nil {
+		response.Fail(c, 404, "not_found", "填报不存在", nil)
+		return
+	}
+	if sub.DepartmentID != departmentID {
 		response.Fail(c, 404, "not_found", "填报不存在", nil)
 		return
 	}
@@ -365,12 +450,25 @@ func (s *Server) voidSubmission(c *gin.Context) {
 }
 
 func (s *Server) restoreSubmission(c *gin.Context) {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
+	departmentID, scopeErr := scope.WritableDepartmentID(s.db)
+	if scopeErr != nil {
+		response.Fail(c, 400, "department_required", scopeErr.Error(), nil)
+		return
+	}
 	id, ok := parseUint64(c, "id")
 	if !ok {
 		return
 	}
 	var sub model.Submission
 	if err := s.db.First(&sub, id).Error; err != nil {
+		response.Fail(c, 404, "not_found", "填报不存在", nil)
+		return
+	}
+	if sub.DepartmentID != departmentID {
 		response.Fail(c, 404, "not_found", "填报不存在", nil)
 		return
 	}
@@ -535,18 +633,22 @@ type mySubmissionDetailResponse struct {
 }
 
 func (s *Server) listMySubmissions(c *gin.Context) {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
 	uid := c.GetUint64("user_id")
 	lineID, _ := strconv.ParseUint(c.Query("lineId"), 10, 64)
 	var lineIDs []uint64
 	var err error
 	if lineID > 0 {
-		if !s.canLine(uid, rbac.PermExecutionView, lineID) {
+		if !s.canLineInScope(scope, rbac.PermExecutionView, lineID) {
 			response.Fail(c, 403, "forbidden", "没有该产线权限", nil)
 			return
 		}
 		lineIDs, err = s.expandLineIDs([]uint64{lineID})
 	} else {
-		lineIDs, err = s.authorizer.AllowedLines(uid)
+		lineIDs, err = s.authorizer.AllowedLines(uid, scope.DepartmentID)
 	}
 	if err != nil {
 		response.Fail(c, 500, "db_error", "查询产线失败", err.Error())
@@ -629,6 +731,10 @@ func (s *Server) attachMySubmissionCounts(uid uint64, items []mySubmissionListIt
 }
 
 func (s *Server) mySubmissionDetail(c *gin.Context) {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
 	id, ok := parseUint64(c, "id")
 	if !ok {
 		return
@@ -646,7 +752,7 @@ func (s *Server) mySubmissionDetail(c *gin.Context) {
 		response.Fail(c, 404, "not_found", "填报不存在", nil)
 		return
 	}
-	if !s.canLine(uid, rbac.PermExecutionView, item.LineID) {
+	if !s.canLineInScope(scope, rbac.PermExecutionView, item.LineID) {
 		response.Fail(c, 403, "forbidden", "没有该产线权限", nil)
 		return
 	}
@@ -733,6 +839,10 @@ func normalizeActionReason(raw, action string) (string, error) {
 }
 
 func (s *Server) currentSubmission(c *gin.Context) {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
 	lineID, _ := strconv.ParseUint(c.Query("lineId"), 10, 64)
 	versionID, _ := strconv.ParseUint(c.Query("versionId"), 10, 64)
 	shiftID, _ := strconv.ParseUint(c.Query("shiftPlanItemId"), 10, 64)
@@ -741,7 +851,7 @@ func (s *Server) currentSubmission(c *gin.Context) {
 		response.OK(c, gin.H{"data": nil})
 		return
 	}
-	if !s.canLine(c.GetUint64("user_id"), rbac.PermExecutionView, lineID) {
+	if !s.canLineInScope(scope, rbac.PermExecutionView, lineID) {
 		response.Fail(c, 403, "forbidden", "没有该产线权限", nil)
 		return
 	}

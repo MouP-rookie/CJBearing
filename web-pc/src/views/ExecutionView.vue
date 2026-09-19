@@ -1,13 +1,15 @@
 <template>
   <div class="page execution-page">
     <div class="page-head"><div><p class="section-label">PC 填报</p><h2 class="page-title">首末检执行中心</h2><p class="page-desc">选择产线和任务后直接填写、确认并提交，提交记录与 PDA 使用同一套日志。</p></div><div class="today-chip"><span>业务日期</span><strong>{{ businessDate }}</strong></div></div>
+    <el-alert v-if="auth.allDepartments" type="info" :closable="false" show-icon title="当前为全部部门只读模式，请在顶栏选择具体部门后再进行填报。" class="scope-alert" />
 
     <div class="execution-grid">
       <aside class="panel selection-panel">
         <div class="panel-heading"><span>01</span><div><strong>选择产线与任务</strong><small>只显示当前账号有权限的产线</small></div></div>
         <el-select v-model="lineId" placeholder="请选择产线" class="line-select" @change="loadForms"><el-option v-for="line in lines" :key="line.id" :label="line.name" :value="line.id" /></el-select>
         <div class="kind-filter"><button v-for="item in kindFilters" :key="item.value" :class="{ active: kindFilter === item.value }" @click="kindFilter = item.value">{{ item.label }}</button></div>
-        <div class="task-list"><button v-for="form in filteredForms" :key="form.versionId" class="task-item" :class="{ active: selectedForm?.versionId === form.versionId }" @click="selectForm(form)"><span class="task-kind">{{ kindName(form.kind) }}</span><span><strong>{{ form.name }}</strong><small>版本 v{{ form.versionNo }} · {{ form.code }}</small></span><el-icon><ArrowRight /></el-icon></button><div v-if="lineId && !filteredForms.length" class="empty-small">该产线当前没有此类任务</div><div v-if="!lineId" class="empty-small">先选择一条产线</div></div>
+        <div class="task-list"><button v-for="form in pagedForms" :key="form.versionId" class="task-item" :class="{ active: selectedForm?.versionId === form.versionId }" @click="selectForm(form)"><span class="task-kind">{{ kindName(form.kind) }}</span><span><strong>{{ form.name }}</strong><small>版本 v{{ form.versionNo }} · {{ form.code }}</small></span><el-icon><ArrowRight /></el-icon></button><div v-if="lineId && !filteredForms.length" class="empty-small">该产线当前没有此类任务</div><div v-if="!lineId" class="empty-small">先选择一条产线</div></div>
+        <AppPagination v-if="filteredForms.length" v-model:page="taskPage" v-model:size="taskSize" :total="filteredForms.length" :page-sizes="[10, 20, 50]" />
       </aside>
 
       <main class="panel fill-panel">
@@ -35,7 +37,7 @@
             <el-button v-if="selectedForm.kind === 'registration'" plain :icon="Plus" @click="rows.push(makeRow())">增加一条登记明细</el-button>
           </div>
 
-          <footer class="fill-actions"><div class="submit-note">提交后日期和班次将锁定，修改会保留审计记录。</div><el-button type="primary" size="large" :loading="submitting" @click="submit">确认提交</el-button></footer>
+          <footer class="fill-actions"><div class="submit-note">提交后日期和班次将锁定，修改会保留审计记录。</div><el-button type="primary" size="large" :disabled="auth.allDepartments" :loading="submitting" @click="submit">确认提交</el-button></footer>
         </template>
         <div v-else class="empty-panel"><div><strong>选择左侧任务开始填报</strong><p>PC 和 PDA 的填报记录会进入同一份日志。</p></div></div>
       </main>
@@ -44,11 +46,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { ArrowRight, Delete, Plus } from '@element-plus/icons-vue'
 import { api } from '@/api'
 import { useAuthStore } from '@/stores/auth'
+import AppPagination from '@/components/AppPagination.vue'
 import { formatDateTime, type FieldDefinition } from '@shared'
 
 type FormRow = { values: Record<string, string[]>; multiValues: Record<string, string[]> }
@@ -63,12 +66,16 @@ const fields = ref<FieldDefinition[]>([])
 const rows = ref<FormRow[]>([])
 const products = ref<any[]>([])
 const kindFilter = ref('all')
+const taskPage = ref(1)
+const taskSize = ref(10)
 const businessDate = ref(new Date().toLocaleDateString('sv-SE'))
 const repeatReason = ref('')
 const submitting = ref(false)
 const kindFilters = [{ label: '全部', value: 'all' }, { label: '首检', value: 'first_inspection' }, { label: '末检', value: 'final_inspection' }, { label: '报表', value: 'report' }, { label: '登记表', value: 'registration' }]
 const selectedLineName = computed(() => lines.value.find(line => line.id === lineId.value)?.name || '')
 const filteredForms = computed(() => kindFilter.value === 'all' ? forms.value : forms.value.filter(form => form.kind === kindFilter.value))
+const pagedForms = computed(() => filteredForms.value.slice((taskPage.value - 1) * taskSize.value, taskPage.value * taskSize.value))
+watch([kindFilter, filteredForms], () => { taskPage.value = 1 })
 function kindName(kind: string) { return { first_inspection: '首检', final_inspection: '末检', report: '报表', registration: '登记表' }[kind] || kind }
 function defaultValue(field: FieldDefinition, _row?: FormRow) { const now = new Date(); const shift = shifts.value.find(item => item.id === shiftItemId.value); const map: Record<string, string> = { '{{current_date}}': businessDate.value, '{{current_time}}': formatDateTime(now), '{{current_shift}}': shift?.name || '', '{{user_name}}': auth.user?.name || '', '{{user_account}}': auth.user?.account || '', '{{line_name}}': selectedLineName.value, '{{line_product}}': products.value.map(p => p.name).join('、'), '{{form_name}}': selectedForm.value?.name || '', '{{stage}}': kindName(selectedForm.value?.kind || '') }; let value = field.defaultValue || ''; for (const [key, replacement] of Object.entries(map)) value = value.replaceAll(key, replacement); return value }
 function makeRow(): FormRow { const row: FormRow = { values: {}, multiValues: {} }; for (const field of fields.value) { row.values[field.key] = [defaultValue(field, row)]; row.multiValues[field.key] = field.type === 'multi_select' && field.defaultValue ? field.defaultValue.split(',').filter(Boolean) : [] } return row }
@@ -76,7 +83,7 @@ function resetRows() { rows.value = [makeRow()] }
 function clearDefault(row: FormRow, field: FieldDefinition, index: number) { if (row.values[field.key][index] === defaultValue(field, row)) row.values[field.key][index] = '' }
 function restoreDefault(row: FormRow, field: FieldDefinition, index: number) { if (!row.values[field.key][index]) row.values[field.key][index] = defaultValue(field, row) }
 function outOfRange(field: FieldDefinition, value: string) { const number = Number(value); if (!value || Number.isNaN(number)) return false; return (field.min !== undefined && number < field.min) || (field.max !== undefined && number > field.max) }
-async function loadLines() { const { data } = await api.get('/execution/lines'); lines.value = data.items; const leaves = lines.value.filter(line => !lines.value.some(child => child.parentId === line.id)).sort((a, b) => ((a.parentId ?? a.id) - (b.parentId ?? b.id)) || (a.id - b.id)); if (leaves.length) { lineId.value = leaves[0].id; await loadForms() } }
+async function loadLines() { const { data } = await api.get('/execution/lines'); lines.value = data.items; const leaves = lines.value.filter(line => !lines.value.some(child => child.parentId === line.id)).sort((a, b) => String(a.code || '').localeCompare(String(b.code || ''), 'zh-CN', { numeric: true, sensitivity: 'base' }) || a.id - b.id); if (leaves.length) { lineId.value = leaves[0].id; await loadForms() } }
 async function loadForms() { forms.value = []; selectedForm.value = undefined; products.value = []; if (!lineId.value) return; const { data } = await api.get('/execution/forms', { params: { lineId: lineId.value } }); forms.value = data.items; try { const prodRes = await api.get('/execution/products', { params: { lineId: lineId.value } }); products.value = prodRes.data.items || [] } catch {} }
 async function loadShifts() { const { data } = await api.get('/execution/shifts'); shifts.value = data.items || []; shiftItemId.value = data.current?.id || shifts.value[0]?.id }
 async function selectForm(form: any) { const { data } = await api.get(`/execution/forms/${form.versionId}`); const schema = typeof data.version.schema === 'string' ? JSON.parse(data.version.schema) : data.version.schema; fields.value = (schema.fields || []).sort((a: any, b: any) => (a.sortOrder || 0) - (b.sortOrder || 0)); selectedForm.value = { ...form, versionNo: data.version.versionNo, schema }; resetRows() }
@@ -91,6 +98,8 @@ async function submit() {
 }
 onMounted(async () => { await Promise.all([loadLines(), loadShifts()]) })
 </script>
+
+<style scoped>.scope-alert{margin:-12px 0 18px}</style>
 
 <style scoped>
 .execution-page .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; }

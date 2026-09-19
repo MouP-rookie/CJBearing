@@ -28,6 +28,14 @@ type formTemplateCleanupSkipped struct {
 }
 
 func (s *Server) deleteUnusedFormTemplates(c *gin.Context) {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
+	if _, err := scope.WritableDepartmentID(s.db); err != nil {
+		response.Fail(c, 400, "department_required", err.Error(), nil)
+		return
+	}
 	var req struct {
 		Kind        string   `json:"kind"`
 		TemplateIDs []uint64 `json:"templateIds"`
@@ -40,7 +48,7 @@ func (s *Server) deleteUnusedFormTemplates(c *gin.Context) {
 		response.Fail(c, 400, "validation_error", "必须指定要清理的模板类型或模板 ID", nil)
 		return
 	}
-	q := s.db.Model(&model.FormTemplate{})
+	q := scope.Filter(s.db.Model(&model.FormTemplate{}), "department_id")
 	if len(req.TemplateIDs) > 0 {
 		q = q.Where("id IN ?", req.TemplateIDs)
 	}
@@ -101,6 +109,14 @@ func (s *Server) deleteUnusedFormTemplates(c *gin.Context) {
 }
 
 func (s *Server) deleteFormTemplates(c *gin.Context) {
+	scope, ok := s.scopeOrFail(c)
+	if !ok {
+		return
+	}
+	if _, err := scope.WritableDepartmentID(s.db); err != nil {
+		response.Fail(c, 400, "department_required", err.Error(), nil)
+		return
+	}
 	var req struct {
 		TemplateIDs []uint64 `json:"templateIds"`
 	}
@@ -113,7 +129,7 @@ func (s *Server) deleteFormTemplates(c *gin.Context) {
 		return
 	}
 	var templates []model.FormTemplate
-	if err := s.db.Where("id IN ?", req.TemplateIDs).Order("id").Find(&templates).Error; err != nil {
+	if err := scope.Filter(s.db.Where("id IN ?", req.TemplateIDs), "department_id").Order("id").Find(&templates).Error; err != nil {
 		response.Fail(c, 500, "db_error", "查询模板失败", err.Error())
 		return
 	}

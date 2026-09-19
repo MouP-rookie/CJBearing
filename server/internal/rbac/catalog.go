@@ -23,6 +23,7 @@ const (
 	PermAuditView           = "audit.view"
 	PermBackupManage        = "backup.manage"
 	PermSystemManage        = "system.manage"
+	PermDepartmentManage    = "department.manage"
 )
 
 type PermissionDefinition struct {
@@ -54,6 +55,7 @@ var Catalog = []PermissionDefinition{
 	{PermAuditView, "查看审计历史", "审计"},
 	{PermBackupManage, "数据库备份", "系统"},
 	{PermSystemManage, "系统设置", "系统"},
+	{PermDepartmentManage, "维护部门", "系统"},
 }
 
 func AllPermissionCodes() []string {
