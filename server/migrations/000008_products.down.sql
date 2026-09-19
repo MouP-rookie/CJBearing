@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS product_lines;
+DROP TABLE IF EXISTS products;

@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.env
+*.log
+server/bin/
+server/backups/
+server/tmp/
+.server.pid
+.DS_Store
+
+.run/
+.idea/

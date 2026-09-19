@@ -1,0 +1,3 @@
+DROP TABLE IF EXISTS shift_plan_items;
+DROP TABLE IF EXISTS shift_plans;
+DROP TABLE IF EXISTS lines;

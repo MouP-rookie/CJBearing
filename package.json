@@ -1,0 +1,19 @@
+{
+  "name": "bearing-inspection",
+  "private": true,
+  "workspaces": [
+    "web-pc",
+    "web-pda",
+    "packages/shared"
+  ],
+  "scripts": {
+    "dev:pc": "npm --workspace web-pc run dev",
+    "dev:pda": "npm --workspace web-pda run dev",
+    "build:pc": "npm --workspace web-pc run build",
+    "build:pda": "npm --workspace web-pda run build",
+    "build": "npm run build:pc && npm run build:pda"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.3"
+  }
+}
