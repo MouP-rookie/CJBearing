@@ -1,3 +1,5 @@
+<!-- 文件说明：班次配置页，维护班次计划、生效时间和跨零点规则。 -->
+
 <template>
   <div class="page shift-page">
     <div class="page-head"><div><p class="section-label">班次版本</p><h2 class="page-title">班次配置</h2><p class="page-desc">修改班次会生成新的生效版本，历史填报仍保留原班次名称和时间。</p></div><el-button type="primary" size="large" :disabled="auth.allDepartments" @click="openCreate">新增班次计划</el-button></div>
@@ -65,6 +67,7 @@ async function load() {
 }
 function openCreate() { editingId.value = 0; form.name = '标准两班'; form.effectiveAt = nowString(); form.items = createDefaultItems(); dialog.value = true }
 function openEdit(plan: any) { editingId.value = plan.id; form.name = plan.name; form.effectiveAt = formatDateTime(plan.effectiveAt); form.items = (plan.items || []).map((item: any) => ({ name: item.name, start: item.startTime, end: item.endTime, crossMidnight: item.crossMidnight })); dialog.value = true }
+// 保存时校验班次名称和时间格式，跨零点必须在明细中明确标记。
 async function save() {
   if (!form.name.trim()) { ElMessage.warning('请填写计划名称'); return }
   if (!form.effectiveAt) { ElMessage.warning('请选择生效时间'); return }

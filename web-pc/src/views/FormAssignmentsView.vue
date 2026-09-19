@@ -1,3 +1,5 @@
+<!-- 文件说明：产线分配页，将已发布表单版本分配给产线并处理父子级联。 -->
+
 <template>
   <div class="page assignment-page">
     <div class="page-head"><div><p class="section-label">表单分发</p><h2 class="page-title">任务与报表分配</h2><p class="page-desc">把已发布的表单版本分配到产线。分配父产线时，其全部子产线会自动使用同一版本；共享模板可以为不同产线指定不同版本。</p></div><el-button type="primary" size="large" :disabled="auth.allDepartments || !selectedTemplate || !publishedVersions.length" :loading="saving" @click="save">保存分配</el-button></div>
@@ -91,13 +93,16 @@ function buildLineRows(lines: any[], assignments: any[]): LineRow[] {
     return { lineId: line.id, lineName: line.name, parentId: line.parentId, hasChildren, versionId: current?.versionId || 0, originalVersionId: current?.versionId || 0, originalVersionNo: current?.versionNo || 0 }
   })
 }
+// 父产线版本变化时仅联动子产线显示值，最终以保存请求为准。
 function onVersionChange(row: LineRow) {
   if (row.parentId) return
   for (const child of lineRows.value) {
     if (child.parentId === row.lineId) child.versionId = row.versionId
   }
 }
+// 一键把所有产线切到最新已发布版本，便于批量换版。
 function assignLatest() { const latest = publishedVersions.value[0]; if (!latest) { ElMessage.warning('没有已发布版本，请先发布'); return } for (const row of lineRows.value) row.versionId = latest.id }
+// 页面允许先发布最新草稿，再为产线选择版本。
 async function publishLatestDraft() {
   if (!selectedTemplate.value || !latestDraft.value) return
   publishing.value = true
@@ -111,6 +116,7 @@ async function publishLatestDraft() {
     publishing.value = false
   }
 }
+// 仅提交有版本的产线，后端会校验版本属于模板且已发布。
 async function save() { if (!selectedTemplate.value) return; if (!publishedVersions.value.length) { ElMessage.warning('该模板还没有已发布版本，无法分配产线'); return } saving.value = true; try { const items = lineRows.value.filter(row => row.versionId > 0).map(row => ({ lineId: row.lineId, versionId: row.versionId })); await api.put(`/admin/form-templates/${selectedTemplate.value.id}/assignments`, { items }); ElMessage.success('产线分配已保存'); await selectTemplate(selectedTemplate.value) } catch (error: any) { ElMessage.error(error.message || '保存分配失败') } finally { saving.value = false } }
 onMounted(loadTemplates)
 </script>

@@ -1,3 +1,5 @@
+<!-- 文件说明：PDA 登录页，支持记住工号和自动登录。 -->
+
 <template>
   <div class="login-page">
     <header class="login-hero">
@@ -32,9 +34,11 @@ const loading = ref(false)
 const auth = useAuthStore()
 const router = useRouter()
 
+// PDA 仅保存工号和自动登录偏好，不保存密码。
 function save() { localStorage.setItem(STORAGE_KEY, JSON.stringify({ account: account.value.trim(), remember: rememberAccount.value, auto: autoLogin.value })) }
 function clear() { localStorage.removeItem(STORAGE_KEY) }
 function onAutoChange(value: boolean) { if (value) rememberAccount.value = true }
+// 登录成功后写入 HttpOnly Cookie，并进入工作台。
 async function submit(fromAuto = false) {
   if (!account.value.trim()) { showToast('请输入工号'); return }
   loading.value = true

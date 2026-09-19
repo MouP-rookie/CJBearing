@@ -1,3 +1,5 @@
+// 文件说明：用户 Excel 模板、批量导入、角色部门解析和行级校验。
+
 package httpapi
 
 import (
@@ -30,6 +32,7 @@ type userImportColumns struct {
 	department int
 }
 
+// userImportTemplate 提供用户批量导入 Excel 模板。
 func (s *Server) userImportTemplate(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -53,6 +56,7 @@ func (s *Server) userImportTemplate(c *gin.Context) {
 	writeWorkbook(c, f, "用户批量导入模板.xlsx")
 }
 
+// importUsers 校验部门、角色和重复工号后批量创建用户。
 func (s *Server) importUsers(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -193,6 +197,7 @@ func (s *Server) roleByCode(code string) (*model.Role, error) {
 	return &role, s.db.Where("code = ?", code).First(&role).Error
 }
 
+// importRole 将导入单元格中的角色名称或编码解析为角色记录。
 func (s *Server) importRole(value string) (*model.Role, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {

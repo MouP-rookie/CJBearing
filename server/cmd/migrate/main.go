@@ -1,3 +1,5 @@
+// 文件说明：数据库迁移命令入口，支持 up、down 和 steps。
+
 package main
 
 import (

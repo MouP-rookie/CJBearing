@@ -1,3 +1,5 @@
+/** 文件说明：PC 登录状态、权限、部门和品牌状态管理。 */
+
 import { defineStore } from 'pinia'
 import { api } from '@/api'
 import type { Department, User } from '@shared'
@@ -18,6 +20,7 @@ export const useAuthStore = defineStore('auth', {
   },
   actions: {
     async login(account:string,password:string){ await api.post('/auth/pc/login',{account,password}); await this.fetchMe() },
+    // fetchMe 绑定用户、权限、产线、部门和品牌信息，是所有页面的权限来源。
     async fetchMe(){
       const {data}=await api.get('/me')
       this.user=data.user
@@ -31,6 +34,7 @@ export const useAuthStore = defineStore('auth', {
       else localStorage.removeItem('bearing-inspection.department')
       this.loaded=true
     },
+    // 部门切换后重新获取 /me，后端会按新范围返回权限和产线。
     async selectDepartment(id:number){
       if (!this.isSuperAdmin) return
       this.selectedDepartmentId=id

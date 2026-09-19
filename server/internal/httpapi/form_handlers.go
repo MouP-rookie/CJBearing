@@ -1,3 +1,5 @@
+// 文件说明：动态表单模板、版本、发布、回滚、执行入口和产线分配接口。
+
 package httpapi
 
 import (
@@ -33,6 +35,7 @@ type formTemplateListItem struct {
 	CanDelete       bool  `json:"canDelete"`
 }
 
+// listFormTemplates 返回部门范围内模板，并附带产线分配和填报使用情况。
 func (s *Server) listFormTemplates(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -74,6 +77,7 @@ func (s *Server) listFormTemplates(c *gin.Context) {
 	response.OK(c, gin.H{"items": items, "total": total, "page": page, "size": size})
 }
 
+// createFormTemplate 创建模板和 v1 草稿，保证模板始终至少有一个版本。
 func (s *Server) createFormTemplate(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -114,6 +118,7 @@ func (s *Server) createFormTemplate(c *gin.Context) {
 	response.Created(c, tpl)
 }
 
+// getFormTemplate 返回模板详情、全部历史版本和当前产线分配。
 func (s *Server) getFormTemplate(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -138,6 +143,7 @@ func (s *Server) getFormTemplate(c *gin.Context) {
 	response.OK(c, gin.H{"template": tpl, "versions": versions, "assignments": assignments})
 }
 
+// createFormVersion 基于当前模板创建新草稿，保留完整版本历史。
 func (s *Server) createFormVersion(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -180,6 +186,7 @@ func (s *Server) createFormVersion(c *gin.Context) {
 	response.Created(c, version)
 }
 
+// publishFormVersion 发布草稿，并在同一事务中更新指定产线的活动版本。
 func (s *Server) publishFormVersion(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -247,6 +254,7 @@ func (s *Server) publishFormVersion(c *gin.Context) {
 	response.OK(c, gin.H{"version": version, "lineIds": req.LineIDs})
 }
 
+// rollbackFormVersion 只切换产线活动版本，不删除后续版本，便于再次回滚。
 func (s *Server) rollbackFormVersion(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -301,6 +309,7 @@ func (s *Server) rollbackFormVersion(c *gin.Context) {
 	response.OK(c, gin.H{"versionId": version.ID, "lineIds": req.LineIDs})
 }
 
+// copyFormTemplate 复制模板和版本结构，常用于首检复制为末检。
 func (s *Server) copyFormTemplate(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -353,6 +362,7 @@ func (s *Server) copyFormTemplate(c *gin.Context) {
 	response.Created(c, target)
 }
 
+// syncPairedTemplate 同步成对首末检模板的字段结构，但不影响历史填报。
 func (s *Server) syncPairedTemplate(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -391,6 +401,7 @@ func (s *Server) syncPairedTemplate(c *gin.Context) {
 	response.Created(c, version)
 }
 
+// executionLines 返回当前用户可访问且启用的产线。
 func (s *Server) executionLines(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -414,6 +425,7 @@ func (s *Server) executionLines(c *gin.Context) {
 	response.OK(c, gin.H{"items": lines})
 }
 
+// executionForms 根据产线分配读取当前可填写的已发布模板版本。
 func (s *Server) executionForms(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -438,6 +450,7 @@ func (s *Server) executionForms(c *gin.Context) {
 	response.OK(c, gin.H{"items": rows})
 }
 
+// executionFormDetail 返回指定版本的 Schema，用于客户端动态渲染。
 func (s *Server) executionFormDetail(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -467,6 +480,7 @@ func parseRawSchema(raw json.RawMessage) (service.FormSchema, error) {
 	return service.ParseSchema(raw)
 }
 
+// executionShifts 返回当前部门生效班次、全部明细和当前班次。
 func (s *Server) executionShifts(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -489,6 +503,7 @@ func (s *Server) executionShifts(c *gin.Context) {
 	response.OK(c, gin.H{"plan": plan, "items": plan.Items, "current": currentItem})
 }
 
+// repeatCheck 在提交前判断相同业务上下文是否已有首检记录。
 func (s *Server) repeatCheck(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -543,6 +558,7 @@ type assignmentItemRequest struct {
 	VersionID uint64 `json:"versionId"`
 }
 
+// listTemplateAssignments 返回部门内产线当前分配版本，并标记是否已分配。
 func (s *Server) listTemplateAssignments(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -590,6 +606,7 @@ func (s *Server) listTemplateAssignments(c *gin.Context) {
 	response.OK(c, gin.H{"items": result})
 }
 
+// updateTemplateAssignments 校验版本已发布后，批量替换模板的产线分配。
 func (s *Server) updateTemplateAssignments(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -685,6 +702,7 @@ func (s *Server) updateTemplateAssignments(c *gin.Context) {
 
 // expandAssignmentItems 展开父产线分配：父产线选定的版本会同步到其全部子产线，
 // 子产线上显式提交的版本优先于父产线的级联值。
+// expandAssignmentItems 将父产线分配展开到子产线；子产线显式版本优先。
 func (s *Server) expandAssignmentItems(items []assignmentItemRequest) ([]assignmentItemRequest, error) {
 	explicit := make(map[uint64]uint64, len(items))
 	all := make(map[uint64]uint64, len(items))

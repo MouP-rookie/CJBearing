@@ -1,3 +1,5 @@
+// 文件说明：系统初始化服务，幂等创建权限、内置角色、部门和超级管理员。
+
 package service
 
 import (
@@ -27,6 +29,7 @@ var normalPermissionCodes = []string{
 	rbac.PermSubmissionEditOwn, rbac.PermSubmissionVoidOwn,
 }
 
+// Seed 使用事务幂等写入权限、内置角色、默认部门和管理员。
 func Seed(db *gorm.DB) error {
 	return db.Transaction(func(tx *gorm.DB) error {
 		permByCode := map[string]model.Permission{}
@@ -109,6 +112,7 @@ func Seed(db *gorm.DB) error {
 	})
 }
 
+// replaceRolePermissions 用目录中的权威权限覆盖系统角色授权，确保升级后权限不漂移。
 func replaceRolePermissions(tx *gorm.DB, roleID uint64, codes []string, permByCode map[string]model.Permission) error {
 	if err := tx.Where("role_id = ?", roleID).Delete(&model.RolePermission{}).Error; err != nil {
 		return err
@@ -125,6 +129,7 @@ func replaceRolePermissions(tx *gorm.DB, roleID uint64, codes []string, permByCo
 	return nil
 }
 
+// ResetAdminPassword 只更新 admin 账号的密码散列，用于运维找回入口。
 func ResetAdminPassword(db *gorm.DB, password string) error {
 	if password == "" {
 		password = "1234"

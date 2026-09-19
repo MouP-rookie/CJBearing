@@ -1,3 +1,5 @@
+/** 文件说明：PDA 应用入口，安装 Pinia、路由和 Vant。 */
+
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import Vant from 'vant'

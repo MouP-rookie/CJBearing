@@ -1,3 +1,5 @@
+// 文件说明：Gin 服务器装配文件，定义中间件、路由分组和部门上下文。
+
 package httpapi
 
 import (
@@ -18,6 +20,7 @@ import (
 	"gorm.io/gorm"
 )
 
+// Server 聚合配置、数据库、认证、授权、备份和仪表服务。
 type Server struct {
 	cfg         *config.Config
 	db          *gorm.DB
@@ -27,10 +30,12 @@ type Server struct {
 	instruments instrument.Ingestor
 }
 
+// NewServer 完成 HTTP 层依赖装配，不执行业务初始化。
 func NewServer(cfg *config.Config, db *gorm.DB, authSvc *auth.Service, authorizer *rbac.Authorizer, backups *backup.Service, ingestor instrument.Ingestor) *Server {
 	return &Server{cfg: cfg, db: db, auth: authSvc, authorizer: authorizer, backups: backups, instruments: ingestor}
 }
 
+// Router 定义公共、登录、PC 管理和执行接口的中间件边界。
 func (s *Server) Router() *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery(), middleware.RequestID(), corsMiddleware())
@@ -131,6 +136,7 @@ func (s *Server) Router() *gin.Engine {
 	return r
 }
 
+// corsMiddleware 仅开发联调使用；生产环境应由反向代理限制来源。
 func corsMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		origin := c.GetHeader("Origin")
@@ -148,6 +154,7 @@ func corsMiddleware() gin.HandlerFunc {
 	}
 }
 
+// currentUser 重新读取数据库用户，确保 Token 签发后停用的账号立即失效。
 func (s *Server) currentUser(c *gin.Context) (*model.User, error) {
 	var user model.User
 	err := s.db.Preload("Role").Preload("Department").First(&user, c.GetUint64("user_id")).Error
@@ -163,6 +170,7 @@ func (s *Server) currentUser(c *gin.Context) (*model.User, error) {
 	return &user, nil
 }
 
+// canLine 将功能权限与单条产线范围合并判断。
 func (s *Server) canLine(userID uint64, permission string, lineID uint64) bool {
 	ok, err := s.authorizer.Can(userID, permission, &lineID)
 	return err == nil && ok

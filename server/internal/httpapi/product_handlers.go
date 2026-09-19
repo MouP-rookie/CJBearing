@@ -1,3 +1,5 @@
+// 文件说明：产品维护、产品产线关联和执行端产品查询接口。
+
 package httpapi
 
 import (
@@ -12,6 +14,7 @@ import (
 	"gorm.io/gorm"
 )
 
+// listProducts 按部门范围分页返回产品及其产线关联。
 func (s *Server) listProducts(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -49,6 +52,7 @@ type productRequest struct {
 	LineIDs []uint64 `json:"lineIds"`
 }
 
+// createProduct 创建产品并保存产线关联。
 func (s *Server) createProduct(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -86,6 +90,7 @@ func (s *Server) createProduct(c *gin.Context) {
 	response.Created(c, product)
 }
 
+// updateProduct 更新产品属性和关联产线，不影响历史字段值。
 func (s *Server) updateProduct(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -130,6 +135,7 @@ func (s *Server) updateProduct(c *gin.Context) {
 	response.OK(c, product)
 }
 
+// deleteProduct 软删除产品并清理产线关联。
 func (s *Server) deleteProduct(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -158,6 +164,7 @@ func (s *Server) deleteProduct(c *gin.Context) {
 }
 
 // replaceProductLines 保存产品与产线的关联；选择父产线时自动同步其全部子产线。
+// replaceProductLines 校验产线属于同一部门，并展开父产线到子产线。
 func (s *Server) replaceProductLines(product *model.Product, lineIDs []uint64) error {
 	expanded, err := s.expandLineIDs(lineIDs)
 	if err != nil {
@@ -176,6 +183,7 @@ func (s *Server) replaceProductLines(product *model.Product, lineIDs []uint64) e
 }
 
 // expandLineIDs 返回给定产线及其全部未删除的子产线（产线最多两级）。
+// expandLineIDs 返回给定产线及其一级子产线，当前产线最多两级。
 func (s *Server) expandLineIDs(lineIDs []uint64) ([]uint64, error) {
 	if len(lineIDs) == 0 {
 		return lineIDs, nil
@@ -209,6 +217,7 @@ func (s *Server) listProductLineOptions(c *gin.Context) {
 	response.OK(c, gin.H{"items": lines})
 }
 
+// executionProducts 只返回指定产线已关联且启用的产品。
 func (s *Server) executionProducts(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {

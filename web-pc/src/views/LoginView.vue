@@ -1,3 +1,5 @@
+<!-- 文件说明：PC 登录页，支持记住密码、自动登录和品牌展示。 -->
+
 <template>
   <div class="login-screen">
     <section class="briefing">
@@ -78,6 +80,7 @@ const loading = ref(false)
 function readSaved(): SavedLogin | null {
   try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null') } catch { return null }
 }
+// 记住密码会写入浏览器 localStorage，公用电脑不应启用。
 function persist() {
   const saved: SavedLogin = { account: account.value.trim(), password: password.value, remember: rememberPassword.value || autoLogin.value, auto: autoLogin.value }
   localStorage.setItem(STORAGE_KEY, JSON.stringify(saved))
@@ -93,6 +96,7 @@ function onAutoLoginChange(value: boolean | string | number) {
 async function loadBrand() {
   try { const { data } = await api.get('/settings/brand'); brandLogo.value = data.logoDataUrl || '' } catch {}
 }
+// PC 登录使用账号密码，成功后加载 /me 并进入系统。
 async function submit(fromAuto = false) {
   if (!account.value.trim() || !password.value) { ElMessage.warning('请输入账号和密码'); return }
   loading.value = true

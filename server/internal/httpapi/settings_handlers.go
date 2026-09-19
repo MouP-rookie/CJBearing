@@ -1,3 +1,5 @@
+// 文件说明：品牌 Logo 和废除原因等部门级设置接口。
+
 package httpapi
 
 import (
@@ -34,6 +36,7 @@ type voidReasonsRequest struct {
 	Items []string `json:"items"`
 }
 
+// getBrandSettings 提供登录页无需认证即可读取的品牌信息。
 func (s *Server) getBrandSettings(c *gin.Context) {
 	var setting model.AppSetting
 	err := s.db.Where("key = ?", brandLogoKey).First(&setting).Error
@@ -61,6 +64,7 @@ func (s *Server) getScopedBrandSettings(c *gin.Context) {
 	response.OK(c, gin.H{"logoDataUrl": logo, "departmentId": scope.DepartmentID})
 }
 
+// updateBrandSettings 仅允许系统管理权限修改当前部门 Logo。
 func (s *Server) updateBrandSettings(c *gin.Context) {
 	var req brandSettingsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -95,6 +99,7 @@ func (s *Server) updateBrandSettings(c *gin.Context) {
 	response.OK(c, gin.H{"logoDataUrl": req.LogoDataURL, "updatedAt": time.Now()})
 }
 
+// getVoidReasons 返回当前部门配置或兼容全局历史配置的废除原因。
 func (s *Server) getVoidReasons(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -234,6 +239,7 @@ func (s *Server) readLegacyVoidReasons() ([]string, error) {
 	return normalizeVoidReasons(items)
 }
 
+// normalizeVoidReasons 去空、去重并限制原因长度和数量。
 func normalizeVoidReasons(raw []string) ([]string, error) {
 	if len(raw) > maxVoidReasons {
 		return nil, fmt.Errorf("废除原因最多配置%d项", maxVoidReasons)

@@ -1,3 +1,5 @@
+// 文件说明：登录、退出、当前用户和用户部门状态相关处理器。
+
 package httpapi
 
 import (
@@ -19,6 +21,7 @@ type pdaLoginRequest struct {
 	Account string `json:"account" binding:"required"`
 }
 
+// pcLogin 校验账号密码、PC 权限和部门状态后签发 PC Token。
 func (s *Server) pcLogin(c *gin.Context) {
 	var req pcLoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -41,6 +44,7 @@ func (s *Server) pcLogin(c *gin.Context) {
 	s.issueToken(c, user, auth.ClientPC)
 }
 
+// pdaLogin 按工号登录，但仍校验 PDA 权限、用户状态和部门状态。
 func (s *Server) pdaLogin(c *gin.Context) {
 	var req pdaLoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -59,6 +63,7 @@ func (s *Server) pdaLogin(c *gin.Context) {
 	s.issueToken(c, user, auth.ClientPDA)
 }
 
+// issueToken 同时写入 HttpOnly Cookie 并返回 Token，兼容浏览器和显式 Bearer 客户端。
 func (s *Server) issueToken(c *gin.Context, user *model.User, client string) {
 	token, expiresAt, err := s.auth.GenerateToken(user.ID, user.Account, client)
 	if err != nil {
@@ -76,6 +81,7 @@ func (s *Server) logout(c *gin.Context) {
 	response.NoContent(c)
 }
 
+// me 返回前端启动所需用户、权限、部门、产线和品牌上下文。
 func (s *Server) me(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -113,6 +119,7 @@ func (s *Server) findUserByAccount(account string) (*model.User, error) {
 	return &user, err
 }
 
+// userPermissions 从 role_permissions 查询权限码，超级管理员直接返回完整目录。
 func (s *Server) userPermissions(user *model.User) ([]string, error) {
 	if user.Role.Code == "super_admin" {
 		return rbac.AllPermissionCodes(), nil

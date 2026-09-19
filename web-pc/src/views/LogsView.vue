@@ -1,3 +1,5 @@
+<!-- 文件说明：日志与导出页，提供日历、筛选、明细查看、废除恢复和 Excel 导出。 -->
+
 <template>
   <div class="page log-page">
     <div class="page-head">
@@ -262,6 +264,7 @@ async function loadTemplates() {
   templates.value = data.items
 }
 
+// 日历按当前筛选条件统计每个业务日期的有效填报数量。
 async function loadCalendar() {
   if (!lineId.value) {
     calendarCounts.value = {}
@@ -288,6 +291,7 @@ async function loadCalendar() {
   }
 }
 
+// 日志列表返回主记录及明细，用于展开查看上下限和状态。
 async function loadLogs() {
   if (!lineId.value) return
   loading.value = true
@@ -333,6 +337,7 @@ function selectCalendarDate(data: CalendarCell) {
   loadLogs()
 }
 
+// 导出当前产线和日期范围，后端负责生成日期分表的工作簿。
 async function exportData() {
   if (!range.value) { ElMessage.warning('请先选择日期范围'); return }
   exporting.value = true
@@ -406,6 +411,7 @@ function openRowVoidDialog(submission: any, detail: any) {
   return openVoidDialog({ kind: 'row', id: detail.rowId, label: `${submission.templateName} · 明细 ${detail.rowNo}` })
 }
 
+// 废除前要求原因，后端会记录操作人、时间和审计日志。
 async function submitVoid() {
   if (!voidTarget.value || !canSubmitVoidReason.value) return
   const reason = voidReason.value === '其他' ? otherVoidReason.value.trim() : voidReason.value
@@ -425,6 +431,7 @@ async function submitVoid() {
   }
 }
 
+// 恢复整单填报，后端只恢复已废除明细。
 async function restoreRecord(row: any) {
   try {
     const { value } = await ElMessageBox.prompt(`恢复后“${row.templateName}”会重新计入导出与统计，请填写恢复原因。`, '整条恢复', {

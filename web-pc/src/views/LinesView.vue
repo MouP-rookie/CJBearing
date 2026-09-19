@@ -1,3 +1,5 @@
+<!-- 文件说明：产线配置页，维护两级产线并支持 Excel 导入。 -->
+
 <template>
   <div class="page lines-page">
     <div class="page-head">

@@ -1,3 +1,5 @@
+// 文件说明：API 服务启动入口，负责加载配置、初始化依赖、注册路由并优雅关闭 HTTP 服务。
+
 package main
 
 import (

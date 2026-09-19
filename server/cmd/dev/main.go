@@ -1,3 +1,5 @@
+// 文件说明：本地开发编排入口，统一执行迁移、初始化并启动 API、PC、PDA 进程。
+
 package main
 
 import (

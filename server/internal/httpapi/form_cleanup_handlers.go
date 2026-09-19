@@ -1,3 +1,5 @@
+// 文件说明：未使用表单模板清理接口。
+
 package httpapi
 
 import (
@@ -27,6 +29,7 @@ type formTemplateCleanupSkipped struct {
 	Reason          string `json:"reason"`
 }
 
+// deleteUnusedFormTemplates 只删除没有产线分配和填报引用的模板。
 func (s *Server) deleteUnusedFormTemplates(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -108,6 +111,7 @@ func (s *Server) deleteUnusedFormTemplates(c *gin.Context) {
 	response.OK(c, gin.H{"deleted": len(deleted), "skipped": len(skipped), "items": deleted, "skippedItems": skipped})
 }
 
+// deleteFormTemplates 执行显式模板删除并保留使用情况保护。
 func (s *Server) deleteFormTemplates(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {

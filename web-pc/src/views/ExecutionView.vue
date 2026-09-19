@@ -1,3 +1,5 @@
+<!-- 文件说明：PC 填报页，按产线、任务、班次动态渲染表单并支持多行提交。 -->
+
 <template>
   <div class="page execution-page">
     <div class="page-head"><div><p class="section-label">PC 填报</p><h2 class="page-title">首末检执行中心</h2><p class="page-desc">选择产线和任务后直接填写、确认并提交，提交记录与 PDA 使用同一套日志。</p></div><div class="today-chip"><span>业务日期</span><strong>{{ businessDate }}</strong></div></div>
@@ -83,10 +85,14 @@ function resetRows() { rows.value = [makeRow()] }
 function clearDefault(row: FormRow, field: FieldDefinition, index: number) { if (row.values[field.key][index] === defaultValue(field, row)) row.values[field.key][index] = '' }
 function restoreDefault(row: FormRow, field: FieldDefinition, index: number) { if (!row.values[field.key][index]) row.values[field.key][index] = defaultValue(field, row) }
 function outOfRange(field: FieldDefinition, value: string) { const number = Number(value); if (!value || Number.isNaN(number)) return false; return (field.min !== undefined && number < field.min) || (field.max !== undefined && number > field.max) }
+// 只把末级产线作为填报入口，父产线用于组织结构。
 async function loadLines() { const { data } = await api.get('/execution/lines'); lines.value = data.items; const leaves = lines.value.filter(line => !lines.value.some(child => child.parentId === line.id)).sort((a, b) => String(a.code || '').localeCompare(String(b.code || ''), 'zh-CN', { numeric: true, sensitivity: 'base' }) || a.id - b.id); if (leaves.length) { lineId.value = leaves[0].id; await loadForms() } }
+// 切换产线后同时刷新可用表单和产品。
 async function loadForms() { forms.value = []; selectedForm.value = undefined; products.value = []; if (!lineId.value) return; const { data } = await api.get('/execution/forms', { params: { lineId: lineId.value } }); forms.value = data.items; try { const prodRes = await api.get('/execution/products', { params: { lineId: lineId.value } }); products.value = prodRes.data.items || [] } catch {} }
 async function loadShifts() { const { data } = await api.get('/execution/shifts'); shifts.value = data.items || []; shiftItemId.value = data.current?.id || shifts.value[0]?.id }
+// 选择任务时按提交版本 Schema 动态生成字段和默认值。
 async function selectForm(form: any) { const { data } = await api.get(`/execution/forms/${form.versionId}`); const schema = typeof data.version.schema === 'string' ? JSON.parse(data.version.schema) : data.version.schema; fields.value = (schema.fields || []).sort((a: any, b: any) => (a.sortOrder || 0) - (b.sortOrder || 0)); selectedForm.value = { ...form, versionNo: data.version.versionNo, schema }; resetRows() }
+// 提交前把页面值铺平为后端字段值数组，每个明细独立保存。
 async function submit() {
   if (!selectedForm.value || !lineId.value || !shiftItemId.value) { ElMessage.warning('请先选择产线、任务和班次'); return }
   if (selectedForm.value.kind === 'first_inspection') { const { data } = await api.get('/execution/repeat-check', { params: { lineId: lineId.value, businessDate: businessDate.value, shiftPlanItemId: shiftItemId.value } }); if (data.required && !repeatReason.value.trim()) { ElMessage.warning('重复首检必须填写原因'); return } }

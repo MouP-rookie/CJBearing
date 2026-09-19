@@ -1,3 +1,5 @@
+// 文件说明：部门 ZIP 恢复上传接口，仅超级管理员可用。
+
 package httpapi
 
 import (
@@ -11,6 +13,7 @@ import (
 
 const backupRestoreMaxBytes = 100 << 20
 
+// restoreBackup 只接受本系统生成的部门 ZIP，仅超级管理员可执行并限制 100MB。
 func (s *Server) restoreBackup(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {

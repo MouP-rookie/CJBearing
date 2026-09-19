@@ -1,3 +1,5 @@
+<!-- 文件说明：废除原因维护页，配置现场废除明细时可选择的原因。 -->
+
 <template>
   <div class="page reason-page">
     <div class="page-head">
@@ -66,6 +68,7 @@ function normalizedItems() {
   return values
 }
 
+// 废除原因按部门保存，现场废除时从该列表选择。
 async function save() {
   saving.value = true
   try {

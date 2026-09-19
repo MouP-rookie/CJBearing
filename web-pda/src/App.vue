@@ -1,3 +1,5 @@
+<!-- 文件说明：PDA 根组件，提供页面容器和版权页脚。 -->
+
 <template>
   <div class="pda-shell">
     <main class="pda-content"><router-view /></main>

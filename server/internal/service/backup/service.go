@@ -1,3 +1,5 @@
+// 文件说明：备份服务，负责完整数据库备份、部门 ZIP 归档和备份记录查询。
+
 package backup
 
 import (
@@ -16,6 +18,7 @@ import (
 	"gorm.io/gorm"
 )
 
+// Service 封装 pg_dump 路径、备份目录和数据库访问。
 type Service struct {
 	db     *gorm.DB
 	pgDump string
@@ -67,6 +70,7 @@ func New(db *gorm.DB, pgDump, dir string) *Service {
 	return &Service{db: db, pgDump: pgDump, dir: dir}
 }
 
+// Create 生成完整 PostgreSQL custom 格式备份并登记 backup_records。
 func (s *Service) Create(databaseURL string, actorID uint64) (*model.BackupRecord, error) {
 	if err := os.MkdirAll(s.dir, 0o755); err != nil {
 		return nil, err
@@ -96,6 +100,7 @@ func (s *Service) Create(databaseURL string, actorID uint64) (*model.BackupRecor
 	return rec, nil
 }
 
+// CreateDepartmentArchive 将单个部门配置和业务数据序列化为 ZIP 归档。
 func (s *Service) CreateDepartmentArchive(departmentID, actorID uint64) (*model.BackupRecord, error) {
 	if err := os.MkdirAll(s.dir, 0o755); err != nil {
 		return nil, err
@@ -136,6 +141,7 @@ func (s *Service) CreateDepartmentArchive(departmentID, actorID uint64) (*model.
 	return rec, nil
 }
 
+// loadDepartmentArchive 读取部门主数据和所有关联业务表，写入归档前会补齐必要引用。
 func (s *Service) loadDepartmentArchive(department model.Department) (*departmentArchive, error) {
 	data := &departmentArchive{Department: department}
 	if err := s.db.Where("department_id = ?", department.ID).Order("key").Find(&data.Settings).Error; err != nil {
@@ -427,6 +433,7 @@ func (s *Service) addMissingArchiveReferences(data *departmentArchive) error {
 	return nil
 }
 
+// writeArchive 将清单和数据文件写入 ZIP，使用确定性文件写入以便校验。
 func writeArchive(path string, files map[string][]byte) error {
 	out, err := os.Create(path)
 	if err != nil {

@@ -1,3 +1,5 @@
+// 文件说明：班次计算服务，负责当前班次、跨零点班次和业务日期解析。
+
 package service
 
 import (
@@ -17,6 +19,7 @@ type ShiftSelection struct {
 	BusinessDate time.Time
 }
 
+// ActiveShiftPlan 取当前时间之前最新生效并预加载明细的班次计划。
 func ActiveShiftPlan(db *gorm.DB, departmentID uint64) (*model.ShiftPlan, error) {
 	var plan model.ShiftPlan
 	q := db.Preload("Items", func(db *gorm.DB) *gorm.DB { return db.Order("sort_order asc, id asc") }).
@@ -31,12 +34,14 @@ func ActiveShiftPlan(db *gorm.DB, departmentID uint64) (*model.ShiftPlan, error)
 	return &plan, nil
 }
 
+// CalculateShift 在 Asia/Shanghai 时区内匹配班次，并返回业务日期。
 func CalculateShift(plan model.ShiftPlan, at time.Time) (*ShiftSelection, error) {
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	if err != nil {
 		return nil, err
 	}
 	at = at.In(loc)
+	// 逐个班次判断；跨零点班次会把结束时间延后一天。
 	for _, item := range plan.Items {
 		start, err := parseClock(item.StartTime)
 		if err != nil {

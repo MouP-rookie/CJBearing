@@ -1,3 +1,5 @@
+<!-- 文件说明：PC 通用分页组件，统一表格分页交互。 -->
+
 <template>
   <div class="pagination-bar">
     <el-pagination

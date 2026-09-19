@@ -1,3 +1,5 @@
+<!-- 文件说明：PC 主框架，负责侧边栏、部门切换、用户信息和页面容器。 -->
+
 <template>
   <el-container class="app-shell">
     <el-aside class="rail" width="236px">
@@ -87,6 +89,7 @@ import { Calendar, Clock, Connection, DataBoard, Document, Download, EditPen, Ci
 import { useAuthStore } from '@/stores/auth'
 import CopyrightFooter from '@/components/CopyrightFooter.vue'
 
+// 菜单和部门切换均以 /me 返回的权限与部门范围为准。
 const auth = useAuthStore()
 const brandLogo = computed(() => auth.brandLogoDataUrl)
 const route = useRoute()
@@ -94,6 +97,7 @@ const router = useRouter()
 const pageTitle = computed(() => ({ '/': '工作台', '/users': '用户与权限', '/departments': '部门维护', '/lines': '产线配置', '/shifts': '班次配置', '/products': '产品维护', '/forms': '任务与表单', '/logs': '日志与导出', '/backups': '数据库备份', '/void-reasons': '废除原因', '/settings': 'Logo 设置' }[route.path] || '工作台'))
 const showConfig = computed(() => auth.can('line.manage') || auth.can('shift.manage') || auth.can('form.view') || auth.can('product.manage') || auth.can('system.manage') || auth.can('log.view'))
 const showSystem = computed(() => auth.can('user.manage') || auth.can('department.manage') || auth.can('backup.manage') || auth.can('system.manage'))
+// 切换部门后刷新页面，确保所有页面重新按新部门范围加载。
 async function changeDepartment(value: number | string) { await auth.selectDepartment(Number(value)); window.location.reload() }
 async function logout() { await auth.logout(); router.push('/login') }
 </script>

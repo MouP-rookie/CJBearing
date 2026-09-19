@@ -1,3 +1,5 @@
+<!-- 文件说明：PDA 我的历史页，查看本人明细并执行废除或恢复。 -->
+
 <template>
   <div class="history-page">
     <div v-if="!online" class="offline-banner">网络已断开，历史查询、废除和恢复暂不可用
@@ -190,6 +192,7 @@ function rangeWarning(value: any) {
   const suffix = value.unit ? ` ${value.unit}` : ''
   return limits.length ? `超出上下限（${limits.join('，')}${suffix}）` : '超出上下限'
 }
+// 汇总本人明细的有效、部分废除、已废除和已被覆盖状态。
 function statusOf(item: any): { text: string; type: HistoryTagType } {
   if (!item.activeRowCount) return { text: '已废除', type: 'danger' }
   if (item.voidedRowCount) return { text: '部分废除', type: 'warning' }
@@ -214,6 +217,7 @@ function selectHistoryLine(id: number) {
   reload()
 }
 
+// 使用递增页码加载本人历史，并防止旧请求覆盖新筛选。
 async function loadPage(version = requestVersion) {
   if (version !== requestVersion) return
   if (!online.value) {
@@ -256,6 +260,7 @@ async function reload() {
   await loadPage(version)
 }
 
+// 详情只返回当前用户自己的明细，但展示同填报的公共上下文。
 async function openDetail(id: number) {
   if (!online.value) { showToast('网络断开，无法查看历史'); return }
   try {
@@ -294,6 +299,7 @@ function openRestore(row: any, item: any) {
   restoreVisible.value = true
 }
 
+// 明细废除必须选择或填写原因，操作结果写审计日志。
 async function submitVoid() {
   if (!actionTarget.value || !canSubmitVoid.value) return
   submitting.value = true
@@ -310,6 +316,7 @@ async function submitVoid() {
   }
 }
 
+// 明细恢复必须填写恢复原因，恢复后重新加载详情。
 async function submitRestore() {
   if (!actionTarget.value || !restoreReason.value.trim()) return
   submitting.value = true

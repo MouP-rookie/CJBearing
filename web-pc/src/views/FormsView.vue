@@ -1,3 +1,5 @@
+<!-- 文件说明：任务与表单页，提供可视化字段设计和模板版本管理。 -->
+
 <template>
   <div class="page forms-page">
     <div class="page-head">
@@ -183,7 +185,9 @@ async function load() {
   total.value = data.total || 0
 }
 async function view(row: any) { const { data } = await api.get(`/admin/form-templates/${row.id}`); versions.value = data.versions; versionPage.value = 1; versionsOpen.value = true }
+// 把编辑器状态转换为后端约定的 FormSchema。
 function buildSchema() { return { fields: fields.value.map((field, index) => ({ ...field, sortOrder: index, options: field.options.map(option => ({ ...option, value: option.value || option.label })) })) } }
+// 新建模板创建 v1 草稿；已有模板保存时生成新草稿版本。
 async function save() {
   if (!metadata.name.trim() || !metadata.code.trim()) { ElMessage.warning('请填写模板名称和模板编码'); return }
   if (!fields.value.length) { ElMessage.warning('请至少增加一个填写项目'); return }
@@ -202,7 +206,9 @@ async function save() {
     load()
   } catch (error: any) { ElMessage.error(error.message) } finally { saving.value = false }
 }
+// 发布最新草稿；已分配该模板的产线会在后端事务中切换活动版本。
 async function publishLatest(row: any) { const { data } = await api.get(`/admin/form-templates/${row.id}`); const draft = data.versions.find((version: any) => version.status === 'draft'); if (!draft) { ElMessage.warning('没有待发布的草稿'); return }; await ElMessageBox.confirm('发布后该版本可在「产线分配」中分配到产线；已经分配过该模板的产线会自动更新到新版本，其他产线不受影响。是否继续？', '发布确认'); await api.post(`/admin/form-versions/${draft.id}/publish`, { lineIds: [] }); ElMessage.success('发布完成'); load() }
+// 首检模板复制为末检模板时保留字段结构并生成新草稿。
 async function copy(row: any) { await api.post(`/admin/form-templates/${row.id}/copy`, { code: `${row.code}_FINAL`, name: `${row.name}（末检）`, kind: 'final_inspection' }); ElMessage.success('已复制为末检草稿'); kind.value = 'final_inspection'; load() }
 async function deleteOne(row: any) {
   try {
@@ -219,6 +225,7 @@ async function deleteOne(row: any) {
   }
 }
 
+// 只清理没有产线分配和填报历史的模板。
 async function deleteUnused() {
   const count = unusedItems.value.length
   if (!count) {

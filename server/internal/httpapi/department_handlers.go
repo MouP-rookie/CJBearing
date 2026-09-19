@@ -1,3 +1,5 @@
+// 文件说明：部门维护接口，仅超级管理员可操作。
+
 package httpapi
 
 import (
@@ -11,6 +13,7 @@ import (
 	"gorm.io/gorm"
 )
 
+// listDepartments 仅向超级管理员列出部门，供部门切换和维护。
 func (s *Server) listDepartments(c *gin.Context) {
 	if !s.requireSuperAdmin(c) {
 		return
@@ -35,6 +38,7 @@ type departmentRequest struct {
 	Enabled *bool  `json:"enabled"`
 }
 
+// createDepartment 创建数据隔离部门并校验编码唯一。
 func (s *Server) createDepartment(c *gin.Context) {
 	if !s.requireSuperAdmin(c) {
 		return
@@ -62,6 +66,7 @@ func (s *Server) createDepartment(c *gin.Context) {
 	response.Created(c, department)
 }
 
+// updateDepartment 支持修改名称和启停状态，不允许修改编码。
 func (s *Server) updateDepartment(c *gin.Context) {
 	if !s.requireSuperAdmin(c) {
 		return
@@ -95,6 +100,7 @@ func (s *Server) updateDepartment(c *gin.Context) {
 	response.OK(c, department)
 }
 
+// deleteDepartment 删除前检查所有关联业务数据，有数据时要求停用而非删除。
 func (s *Server) deleteDepartment(c *gin.Context) {
 	if !s.requireSuperAdmin(c) {
 		return

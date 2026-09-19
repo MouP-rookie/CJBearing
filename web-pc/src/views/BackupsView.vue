@@ -1,3 +1,5 @@
+<!-- 文件说明：数据库备份页，生成和下载完整备份或部门归档，并支持部门 ZIP 恢复。 -->
+
 <template>
   <div class="page">
     <h2 class="page-title">数据库备份</h2>
@@ -97,12 +99,14 @@ async function load() {
   total.value = data.total || 0
 }
 
+// 全部部门范围生成完整备份，具体部门生成可恢复的 ZIP 归档。
 async function create() {
   await api.post('/admin/backups', { type: auth.allDepartments ? 'full' : 'department' })
   ElMessage.success(auth.allDepartments ? '完整备份已生成' : '部门归档已生成')
   await load()
 }
 
+// 通过 Blob 下载后端保存的备份文件。
 async function download(row: any) {
   const res = await api.get(`/admin/backups/${row.id}/download`, { responseType: 'blob' })
   const url = URL.createObjectURL(res.data)
@@ -140,6 +144,7 @@ function resetRestore() {
   uploadRef.value?.clearFiles()
 }
 
+// 恢复前进行高风险二次确认，只上传本系统生成的部门 ZIP。
 async function submitRestore() {
   if (!restoreFile.value) return
   try {

@@ -1,3 +1,5 @@
+<!-- 文件说明：PDA 工作台，选择产线并展示当前可填写任务。 -->
+
 <template>
   <div class="home-page">
     <div v-if="!online" class="offline-banner">网络已断开，当前只保留正在填写的草稿，请恢复网络后继续</div>
@@ -70,6 +72,7 @@ const switchingLineId = ref<number | null>(null)
 const online = ref(navigator.onLine)
 const selectedLineName = computed(() => lines.value.find(item => item.id === lineId.value)?.name || '请选择产线')
 function kindName(kind: string) { return { first_inspection: '首检', final_inspection: '末检', report: '报表', registration: '登记表' }[kind] || kind }
+// 优先恢复路由或本机保存的产线；只有一条末级产线时自动选择。
 async function loadLines() {
   const { data } = await api.get('/execution/lines')
   lines.value = data.items
@@ -80,6 +83,7 @@ async function loadLines() {
   const leaves = lines.value.filter(item => !lines.value.some(child => child.parentId === item.id))
   if (leaves.length === 1) await selectLine(leaves[0])
 }
+// 切换产线时同步刷新该产线的可填写任务，并把选择保存到本机。
 async function selectLine(item: any) {
   switchingLineId.value = item.id
   try {
@@ -97,9 +101,11 @@ async function selectLine(item: any) {
   }
 }
 function openHistory() { router.push({ path: '/history', query: lineId.value ? { lineId: String(lineId.value) } : {} }) }
+// 表单页通过 query 携带产线、模板和类型，避免再次请求任务列表。
 function openForm(form: any) { router.push({ path: `/form/${form.versionId}`, query: { lineId: String(lineId.value), lineName: selectedLineName.value, templateId: String(form.templateId || form.template_id), name: form.name, kind: form.kind } }) }
 async function logout() { try { await showConfirmDialog({ title: '退出登录', message: '确定要退出当前账号吗？' }); await auth.logout(); router.replace('/login') } catch {} }
 
+// 浏览器 online/offline 事件驱动页面断网提示和操作开关。
 function updateOnline() { online.value = navigator.onLine }
 onMounted(() => { window.addEventListener('online', updateOnline); window.addEventListener('offline', updateOnline); loadLines() })
 onUnmounted(() => { window.removeEventListener('online', updateOnline); window.removeEventListener('offline', updateOnline) })

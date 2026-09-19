@@ -1,3 +1,5 @@
+<!-- 文件说明：PC 工作台，展示当前用户、权限范围、服务状态和快捷入口。 -->
+
 <template>
   <div class="page dashboard">
     <div class="dashboard-head">

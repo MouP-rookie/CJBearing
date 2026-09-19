@@ -1,3 +1,5 @@
+// 文件说明：运维命令，用于重置默认 admin 账号密码。
+
 package main
 
 import (

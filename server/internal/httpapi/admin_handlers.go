@@ -1,3 +1,5 @@
+// 文件说明：用户、角色、产线、班次管理及分页、审计辅助处理器。
+
 package httpapi
 
 import (
@@ -16,6 +18,7 @@ import (
 	"gorm.io/gorm"
 )
 
+// parseUint64 统一解析路径参数并返回标准错误。
 func parseUint64(c *gin.Context, key string) (uint64, bool) {
 	id, err := strconv.ParseUint(c.Param(key), 10, 64)
 	if err != nil {
@@ -25,6 +28,7 @@ func parseUint64(c *gin.Context, key string) (uint64, bool) {
 	return id, true
 }
 
+// listUsers 按部门范围、账号和角色筛选用户。
 func (s *Server) listUsers(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -64,6 +68,7 @@ type userRequest struct {
 	Enabled      *bool   `json:"enabled"`
 }
 
+// createUser 创建账号时禁止第二个超级管理员，并强制普通用户绑定可用部门。
 func (s *Server) createUser(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -119,6 +124,7 @@ func (s *Server) createUser(c *gin.Context) {
 	response.Created(c, user)
 }
 
+// updateUser 只允许在部门范围内修改用户状态、角色和部门。
 func (s *Server) updateUser(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -205,6 +211,7 @@ func (s *Server) updateUser(c *gin.Context) {
 	response.OK(c, user)
 }
 
+// resetUserPassword 在权限范围内重置用户密码。
 func (s *Server) resetUserPassword(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -256,6 +263,7 @@ func (s *Server) resetUserPassword(c *gin.Context) {
 	response.NoContent(c)
 }
 
+// listRoles 返回角色及其权限和产线范围。
 func (s *Server) listRoles(c *gin.Context) {
 	var roles []model.Role
 	if err := s.db.Order("id").Find(&roles).Error; err != nil {
@@ -279,6 +287,7 @@ func (s *Server) listRoleOptions(c *gin.Context) {
 	response.OK(c, gin.H{"items": roles})
 }
 
+// resolveUserDepartment 将请求部门和当前范围合并，普通管理员只能落回本部门。
 func (s *Server) resolveUserDepartment(scope *departmentScope, requested *uint64, roleCode string) (*uint64, error) {
 	if roleCode == "super_admin" {
 		return nil, fmt.Errorf("系统只允许一个超级管理员，不能创建或分配超级管理员角色")
@@ -315,6 +324,7 @@ type roleRequest struct {
 	LineIDs         []uint64 `json:"lineIds"`
 }
 
+// createRole 禁止创建新的超级管理员角色，并保存权限与产线范围。
 func (s *Server) createRole(c *gin.Context) {
 	var req roleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -340,6 +350,7 @@ func (s *Server) createRole(c *gin.Context) {
 	response.Created(c, role)
 }
 
+// updateRole 系统角色不允许改变核心属性，自定义角色可更新授权。
 func (s *Server) updateRole(c *gin.Context) {
 	id, ok := parseUint64(c, "id")
 	if !ok {
@@ -378,6 +389,7 @@ func (s *Server) updateRole(c *gin.Context) {
 	response.OK(c, role)
 }
 
+// replaceRoleGrants 在一个事务中重写角色权限和产线范围。
 func replaceRoleGrants(tx *gorm.DB, roleID uint64, permissionCodes []string, lineIDs []uint64) error {
 	if err := tx.Where("role_id = ?", roleID).Delete(&model.RolePermission{}).Error; err != nil {
 		return err
@@ -409,6 +421,7 @@ func (s *Server) roleByID(id uint64) (*model.Role, error) {
 	return &r, s.db.First(&r, id).Error
 }
 
+// listLines 返回部门范围内产线树并保持自然编码排序。
 func (s *Server) listLines(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -467,6 +480,7 @@ type lineRequest struct {
 	Enabled  *bool   `json:"enabled"`
 }
 
+// createLine 创建产线时限制最多两级并校验父产线部门。
 func (s *Server) createLine(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -508,6 +522,7 @@ func (s *Server) createLine(c *gin.Context) {
 	response.Created(c, line)
 }
 
+// updateLine 更新产线属性并维护父子层级约束。
 func (s *Server) updateLine(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -546,6 +561,7 @@ func (s *Server) updateLine(c *gin.Context) {
 	response.OK(c, line)
 }
 
+// deleteLine 对已有子产线或业务引用的产线执行引用保护。
 func (s *Server) deleteLine(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -583,6 +599,7 @@ func (s *Server) deleteLine(c *gin.Context) {
 	response.NoContent(c)
 }
 
+// listShiftPlans 返回部门范围内班次计划和明细。
 func (s *Server) listShiftPlans(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -617,6 +634,7 @@ type shiftItemRequest struct {
 	SortOrder     int    `json:"sortOrder"`
 }
 
+// createShiftPlan 校验班次时间段后创建计划。
 func (s *Server) createShiftPlan(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -645,6 +663,7 @@ func (s *Server) createShiftPlan(c *gin.Context) {
 	response.Created(c, plan)
 }
 
+// updateShiftPlan 通过创建替代计划并软删除旧计划，避免直接篡改历史引用。
 func (s *Server) updateShiftPlan(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -713,6 +732,7 @@ func (s *Server) deleteShiftPlan(c *gin.Context) {
 	response.NoContent(c)
 }
 
+// buildShiftPlan 将请求转换为带明细的班次计划，并校验时间格式。
 func buildShiftPlan(req shiftPlanRequest, userID, departmentID uint64) (*model.ShiftPlan, error) {
 	if len(req.Items) == 0 {
 		return nil, fmt.Errorf("至少配置一个班次")
@@ -756,6 +776,7 @@ func pageParams(c *gin.Context) (int, int) {
 	return page, size
 }
 
+// audit 将关键动作写入审计表；审计失败不应阻断主业务。
 func (s *Server) audit(c *gin.Context, entity string, id uint64, action string, before, after any) {
 	beforeJSON := mustJSON(before)
 	afterJSON := mustJSON(after)

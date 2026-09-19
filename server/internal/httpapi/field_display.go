@@ -1,3 +1,5 @@
+// 文件说明：字段值显示转换，将选项 value 转为界面 label。
+
 package httpapi
 
 import (
@@ -6,6 +8,7 @@ import (
 	"bearing-inspection/internal/service"
 )
 
+// displayFieldText 将单多选字段存储值转换为配置的中文标签。
 func displayFieldText(value string, field service.FieldDefinition) string {
 	if field.Type != "single_select" && field.Type != "multi_select" {
 		return value

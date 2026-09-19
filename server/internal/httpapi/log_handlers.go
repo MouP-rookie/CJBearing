@@ -1,3 +1,5 @@
+// 文件说明：填报日志、日历、审计日志、备份记录和仪表报文查询接口。
+
 package httpapi
 
 import (
@@ -67,6 +69,7 @@ type calendarItem struct {
 	Count        int64     `json:"count"`
 }
 
+// listLogs 按授权产线和筛选条件返回主填报，并补充状态、字段详情和上下限。
 func (s *Server) listLogs(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -120,6 +123,7 @@ func (s *Server) listLogs(c *gin.Context) {
 	response.OK(c, gin.H{"items": items, "total": total, "page": page, "size": size})
 }
 
+// attachLogDetails 批量加载字段值并解析提交版本 Schema，避免逐条查询。
 func (s *Server) attachLogDetails(items []logListItem) {
 	if len(items) == 0 {
 		return
@@ -254,6 +258,7 @@ func (s *Server) latestInspectionIDs(lineIDs []uint64) map[string]uint64 {
 	return out
 }
 
+// logCalendar 按业务日期统计有有效明细的填报数量。
 func (s *Server) logCalendar(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -294,6 +299,7 @@ func (s *Server) logCalendar(c *gin.Context) {
 	response.OK(c, gin.H{"items": items})
 }
 
+// listAuditLogs 在部门范围内检索审计记录。
 func (s *Server) listAuditLogs(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -317,6 +323,7 @@ func (s *Server) listAuditLogs(c *gin.Context) {
 	response.OK(c, gin.H{"items": items, "total": total, "page": page, "size": size})
 }
 
+// listBackups 按部门范围分页查询备份记录。
 func (s *Server) listBackups(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -331,6 +338,7 @@ func (s *Server) listBackups(c *gin.Context) {
 	response.OK(c, gin.H{"items": items, "total": total, "page": page, "size": size})
 }
 
+// createBackup 根据范围选择完整备份或部门归档，并再次校验超级管理员权限。
 func (s *Server) createBackup(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -375,6 +383,7 @@ func (s *Server) createBackup(c *gin.Context) {
 	response.Created(c, rec)
 }
 
+// downloadBackup 校验备份记录属于当前范围后返回附件。
 func (s *Server) downloadBackup(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -392,6 +401,7 @@ func (s *Server) downloadBackup(c *gin.Context) {
 	c.FileAttachment(rec.FilePath, rec.FileName)
 }
 
+// listInstrumentMessages 返回部门范围内仪表原始报文，供后续调试和解析。
 func (s *Server) listInstrumentMessages(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {

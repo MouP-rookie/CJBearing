@@ -1,3 +1,5 @@
+// 文件说明：填报创建、查询、明细修改、废除、恢复和 PDA 历史接口。
+
 package httpapi
 
 import (
@@ -44,6 +46,7 @@ type submissionRequest struct {
 	Rows            []rowInput `json:"rows"`
 }
 
+// createSubmission 校验产线、版本、班次和操作人后，在事务中写入主记录、明细和字段值。
 func (s *Server) createSubmission(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -107,6 +110,7 @@ func (s *Server) createSubmission(c *gin.Context) {
 		response.Fail(c, 400, "validation_error", "业务日期格式应为YYYY-MM-DD", nil)
 		return
 	}
+	// 首检重复性按产线、模板、业务日期和班次共同判断，重复提交必须说明原因。
 	if tpl.Kind == model.FormKindFirstInspection {
 		var count int64
 		s.db.Model(&model.Submission{}).Where("template_id = ? AND line_id = ? AND business_date = ? AND shift_plan_item_id = ?", req.TemplateID, req.LineID, businessDate, req.ShiftPlanItemID).Count(&count)
@@ -158,6 +162,7 @@ func (s *Server) createSubmission(c *gin.Context) {
 	response.Created(c, created)
 }
 
+// listSubmissions 查询指定产线和筛选条件下的填报主记录。
 func (s *Server) listSubmissions(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -192,6 +197,7 @@ func (s *Server) listSubmissions(c *gin.Context) {
 	response.OK(c, gin.H{"items": items})
 }
 
+// updateSubmissionRow 校验本人或范围权限后，以替换字段值的方式保存明细。
 func (s *Server) updateSubmissionRow(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -253,6 +259,8 @@ func (s *Server) updateSubmissionRow(c *gin.Context) {
 	response.OK(c, gin.H{"id": row.ID})
 }
 
+// voidSubmissionRow 单独废除一行并强制记录原因和操作人。
+// voidSubmission 批量废除一次填报中的全部有效明细。
 func (s *Server) voidSubmissionRow(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -319,6 +327,8 @@ func (s *Server) voidSubmissionRow(c *gin.Context) {
 	response.OK(c, row)
 }
 
+// restoreSubmissionRow 恢复一行已废除明细并保存恢复原因。
+// restoreSubmission 批量恢复一次填报中的全部已废除明细。
 func (s *Server) restoreSubmissionRow(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -385,6 +395,7 @@ func (s *Server) restoreSubmissionRow(c *gin.Context) {
 	response.OK(c, row)
 }
 
+// voidSubmission 批量废除一次填报中的全部有效明细。
 func (s *Server) voidSubmission(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -449,6 +460,7 @@ func (s *Server) voidSubmission(c *gin.Context) {
 	response.OK(c, gin.H{"id": sub.ID, "voidedRows": res.RowsAffected})
 }
 
+// restoreSubmission 批量恢复一次填报中的全部已废除明细。
 func (s *Server) restoreSubmission(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -513,6 +525,7 @@ func (s *Server) restoreSubmission(c *gin.Context) {
 	response.OK(c, gin.H{"id": sub.ID, "restoredRows": res.RowsAffected})
 }
 
+// canVoidSubmission 同时支持本人填报权限和授权产线范围权限。
 func (s *Server) canVoidSubmission(uid uint64, sub *model.Submission) bool {
 	if self, _ := s.authorizer.Can(uid, rbac.PermSubmissionVoidOwn, nil); self && sub.CreatedBy == uid {
 		return true
@@ -520,6 +533,7 @@ func (s *Server) canVoidSubmission(uid uint64, sub *model.Submission) bool {
 	return s.canLine(uid, rbac.PermSubmissionVoidScope, sub.LineID)
 }
 
+// canRestoreSubmission 允许提交人或授权产线范围恢复整单。
 func (s *Server) canRestoreSubmission(uid uint64, sub *model.Submission) bool {
 	if self, _ := s.authorizer.Can(uid, rbac.PermSubmissionEditOwn, nil); self && sub.CreatedBy == uid {
 		return true
@@ -527,18 +541,23 @@ func (s *Server) canRestoreSubmission(uid uint64, sub *model.Submission) bool {
 	return s.canLine(uid, rbac.PermSubmissionEditScope, sub.LineID)
 }
 
+// canEditRow 允许明细操作人本人或授权范围人员修改明细。
 func (s *Server) canEditRow(uid uint64, sub *model.Submission, row *model.SubmissionRow) bool {
 	if self, _ := s.authorizer.Can(uid, rbac.PermSubmissionEditOwn, nil); self && row.OperatorID == uid {
 		return true
 	}
 	return s.canLine(uid, rbac.PermSubmissionEditScope, sub.LineID)
 }
+
+// canVoidRow 与编辑权限类似，但使用独立的废除权限码。
 func (s *Server) canVoidRow(uid uint64, sub *model.Submission, row *model.SubmissionRow) bool {
 	if self, _ := s.authorizer.Can(uid, rbac.PermSubmissionVoidOwn, nil); self && row.OperatorID == uid {
 		return true
 	}
 	return s.canLine(uid, rbac.PermSubmissionVoidScope, sub.LineID)
 }
+
+// defaultSource 把空来源规范化为手工录入。
 func defaultSource(v string) string {
 	if v == "" {
 		return "manual"
@@ -632,6 +651,7 @@ type mySubmissionDetailResponse struct {
 	Rows []mySubmissionRowResponse `json:"rows"`
 }
 
+// listMySubmissions 只返回当前用户参与过的填报，并按授权产线过滤。
 func (s *Server) listMySubmissions(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -730,6 +750,7 @@ func (s *Server) attachMySubmissionCounts(uid uint64, items []mySubmissionListIt
 	}
 }
 
+// mySubmissionDetail 返回当前用户自己的明细，并标记被更新记录覆盖的状态。
 func (s *Server) mySubmissionDetail(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -827,6 +848,7 @@ func (s *Server) mySubmissionDetail(c *gin.Context) {
 	response.OK(c, result)
 }
 
+// normalizeActionReason 强制废除和恢复必须填写原因，并限制为 500 字。
 func normalizeActionReason(raw, action string) (string, error) {
 	reason := strings.TrimSpace(raw)
 	if reason == "" {
@@ -838,6 +860,7 @@ func normalizeActionReason(raw, action string) (string, error) {
 	return reason, nil
 }
 
+// currentSubmission 返回同一产线、版本、业务日期和班次下最近一次有效填报，供现场快速复用。
 func (s *Server) currentSubmission(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {

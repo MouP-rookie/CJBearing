@@ -1,3 +1,5 @@
+<!-- 文件说明：产品维护页，维护产品及其可生产产线。 -->
+
 <template>
   <div class="page products-page">
     <div class="page-head">
@@ -76,6 +78,7 @@ async function load() {
 async function loadLines() { const { data } = await api.get('/admin/product-line-options'); lineOptions.value = data.items }
 function openCreate() { form.id = 0; form.code = ''; form.name = ''; form.enabled = true; form.lineIds = []; dialog.value = true }
 function openEdit(row: any) { form.id = row.id; form.code = row.code; form.name = row.name; form.enabled = row.enabled; form.lineIds = (row.lines || []).map((line: any) => line.id); dialog.value = true }
+// 产品保存后更新与产线的关联，父产线选择会展开到子产线。
 async function save() {
   if (!form.code.trim() || !form.name.trim()) { ElMessage.warning('请填写产品编码和名称'); return }
   saving.value = true

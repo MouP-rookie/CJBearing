@@ -1,3 +1,5 @@
+// 文件说明：部门范围辅助逻辑，包括产线自然排序、归属校验和产线权限判断。
+
 package httpapi
 
 import (
@@ -29,6 +31,7 @@ func sortLinesByDepartmentAndCode(lines []model.Line) {
 	})
 }
 
+// compareLineCode 用自然排序处理 L2、L10 一类编码。
 func compareLineCode(a, b string) int {
 	a, b = strings.ToLower(strings.TrimSpace(a)), strings.ToLower(strings.TrimSpace(b))
 	for ai, bi := 0, 0; ai < len(a) && bi < len(b); {
@@ -84,6 +87,7 @@ func isASCIIDigit(value byte) bool {
 	return value >= '0' && value <= '9'
 }
 
+// ensureLinesInDepartment 防止跨部门伪造产线 ID。
 func (s *Server) ensureLinesInDepartment(lineIDs []uint64, departmentID uint64) error {
 	if len(lineIDs) == 0 {
 		return nil
@@ -107,6 +111,7 @@ func (s *Server) ensureLinesInDepartment(lineIDs []uint64, departmentID uint64) 
 	return nil
 }
 
+// ensureUsersInDepartment 防止填报引用其他部门的操作人员。
 func (s *Server) ensureUsersInDepartment(userIDs []uint64, departmentID uint64) error {
 	if len(userIDs) == 0 {
 		return nil
@@ -136,6 +141,7 @@ func (s *Server) ensureUsersInDepartment(userIDs []uint64, departmentID uint64) 
 	return nil
 }
 
+// canLineInScope 同时校验功能权限、产线权限和当前部门范围。
 func (s *Server) canLineInScope(scope *departmentScope, permission string, lineID uint64) bool {
 	if scope == nil || !s.canLine(scope.User.ID, permission, lineID) {
 		return false

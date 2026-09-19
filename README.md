@@ -37,3 +37,8 @@
 ## GoLand 一键开发启动
 
 在 GoLand 中打开 D:\\code\\DG\\server，运行 server\\cmd\\dev\\main.go，会自动启动数据库迁移、初始化、API、PC 前端和 PDA 前端。按 Ctrl+C 停止全部服务。
+
+## 项目文档
+
+- [系统架构说明](docs/ARCHITECTURE.md)
+- [操作手册](docs/OPERATION_MANUAL.md)

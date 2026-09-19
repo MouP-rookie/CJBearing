@@ -1,3 +1,5 @@
+// 文件说明：动态表单服务，负责 Schema 校验、默认变量和产品字段处理。
+
 package service
 
 import (
@@ -50,6 +52,7 @@ type DefaultContext struct {
 
 var tokenPattern = regexp.MustCompile(`\{\{([a-z_]+)\}\}`)
 
+// ParseSchema 先反序列化，再执行统一结构校验。
 func ParseSchema(raw []byte) (FormSchema, error) {
 	var schema FormSchema
 	if err := json.Unmarshal(raw, &schema); err != nil {
@@ -58,6 +61,7 @@ func ParseSchema(raw []byte) (FormSchema, error) {
 	return schema, ValidateSchema(schema)
 }
 
+// ValidateSchema 检查字段 key、类型、选项、数值上下限和产品字段约束。
 func ValidateSchema(schema FormSchema) error {
 	if len(schema.Fields) == 0 {
 		return errors.New("表单至少需要一个字段")
@@ -88,6 +92,7 @@ func ValidateSchema(schema FormSchema) error {
 	return nil
 }
 
+// ResolveDefault 将双花括号模板变量替换为当前业务上下文。
 func ResolveDefault(value string, ctx DefaultContext) string {
 	if value == "" {
 		return ""
@@ -153,6 +158,7 @@ func HasProductField(schema FormSchema) bool {
 	return false
 }
 
+// PrependProductField 为旧首末检模板补充产品字段并生成新草稿版本。
 func PrependProductField(schema FormSchema) FormSchema {
 	used := make(map[string]bool, len(schema.Fields))
 	for _, f := range schema.Fields {

@@ -1,3 +1,5 @@
+// 文件说明：部门数据范围解析，将当前用户和请求头转换为可查询范围。
+
 package httpapi
 
 import (
@@ -12,12 +14,14 @@ import (
 	"gorm.io/gorm"
 )
 
+// departmentScope 描述一次请求可访问的部门范围。
 type departmentScope struct {
 	User           *model.User
 	DepartmentID   uint64
 	AllDepartments bool
 }
 
+// scopeOrFail 解析当前用户和请求头部门，所有业务查询都应先调用它。
 func (s *Server) scopeOrFail(c *gin.Context) (*departmentScope, bool) {
 	user, err := s.currentUser(c)
 	if err != nil {
@@ -63,6 +67,7 @@ func (s *Server) requireSuperAdmin(c *gin.Context) bool {
 	return true
 }
 
+// Filter 给查询追加部门等值条件。
 func (s *departmentScope) Filter(query *gorm.DB, column string) *gorm.DB {
 	if s.AllDepartments {
 		return query
@@ -70,6 +75,7 @@ func (s *departmentScope) Filter(query *gorm.DB, column string) *gorm.DB {
 	return query.Where(column+" = ?", s.DepartmentID)
 }
 
+// Filter 给查询追加部门等值条件。
 func (s *departmentScope) FilterOptional(query *gorm.DB, column string) *gorm.DB {
 	if s.AllDepartments {
 		return query
@@ -81,6 +87,7 @@ func (s *departmentScope) CanAccessDepartment(departmentID uint64) bool {
 	return s.AllDepartments || s.DepartmentID == departmentID
 }
 
+// WritableDepartmentID 要求写操作必须落在具体且启用的部门上。
 func (s *departmentScope) WritableDepartmentID(db *gorm.DB) (uint64, error) {
 	if s.AllDepartments || s.DepartmentID == 0 {
 		return 0, errors.New("请先选择部门")

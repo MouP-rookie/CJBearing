@@ -1,3 +1,5 @@
+// 文件说明：认证与客户端类型中间件，解析 JWT 并校验 PC/PDA 客户端。
+
 package middleware
 
 import (
@@ -10,6 +12,7 @@ import (
 	"github.com/google/uuid"
 )
 
+// RequestID 为每个请求生成唯一标识，并透传到响应头和审计日志。
 func RequestID() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id := c.GetHeader("X-Request-ID")
@@ -22,6 +25,7 @@ func RequestID() gin.HandlerFunc {
 	}
 }
 
+// Auth 优先读取 Bearer Token，兼容浏览器 HttpOnly Cookie，并解析用户上下文。
 func Auth(svc *auth.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		raw := ""
@@ -50,6 +54,7 @@ func Auth(svc *auth.Service) gin.HandlerFunc {
 	}
 }
 
+// RequireClient 防止 PDA Token 调用 PC 管理接口。
 func RequireClient(client string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if c.GetString("client") != client {

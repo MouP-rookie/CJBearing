@@ -1,3 +1,5 @@
+// 文件说明：部门归档恢复服务，完成 ZIP 校验、事务覆盖和主键重映射。
+
 package backup
 
 import (
@@ -40,6 +42,7 @@ type RestoreResult struct {
 	InstrumentMsgs int    `json:"instrumentMessages"`
 }
 
+// RestoreDepartmentArchive 是恢复入口：先解析校验，再在单事务内覆盖部门数据。
 func (s *Service) RestoreDepartmentArchive(payload []byte, actorID uint64) (*RestoreResult, error) {
 	_ = actorID
 	data, err := parseAndValidateDepartmentArchive(payload)
@@ -56,6 +59,7 @@ func (s *Service) RestoreDepartmentArchive(payload []byte, actorID uint64) (*Res
 	return result, nil
 }
 
+// ValidateDepartmentArchive 做只读校验，不修改任何业务数据。
 func (s *Service) ValidateDepartmentArchive(payload []byte) (*RestoreResult, error) {
 	data, err := parseAndValidateDepartmentArchive(payload)
 	if err != nil {
@@ -91,6 +95,7 @@ func parseAndValidateDepartmentArchive(payload []byte) (*departmentArchive, erro
 	return data, nil
 }
 
+// restoreDepartmentArchiveTx 按依赖顺序重建部门数据，任何一步失败都会回滚。
 func (s *Service) restoreDepartmentArchiveTx(tx *gorm.DB, data *departmentArchive, result *RestoreResult) error {
 	deletedLines := idSet(data.DeletedLineIDs)
 	deletedPlans := idSet(data.DeletedShiftPlanIDs)
@@ -344,6 +349,7 @@ func readZipFile(file *zip.File) ([]byte, error) {
 	return payload, nil
 }
 
+// clearDepartmentData 只清理目标部门数据，部门主记录本身保留并更新。
 func clearDepartmentData(tx *gorm.DB, departmentID uint64) error {
 	submissionIDs := tx.Unscoped().Model(&model.Submission{}).Select("id").Where("department_id = ?", departmentID)
 	if err := tx.Unscoped().Where("submission_id IN (?)", submissionIDs).Delete(&model.FieldValue{}).Error; err != nil {
@@ -426,6 +432,7 @@ func loadArchiveRoles(tx *gorm.DB, users []archiveUser) (map[uint64]model.Role, 
 	return out, nil
 }
 
+// restoreUsers 重建用户并建立归档旧 ID 到新 ID 的映射，后续所有外键都依赖该映射。
 func restoreUsers(tx *gorm.DB, departmentID uint64, users []archiveUser, roles map[uint64]model.Role, result *RestoreResult) (map[uint64]uint64, error) {
 	out := make(map[uint64]uint64, len(users))
 	for _, archived := range users {
@@ -713,6 +720,7 @@ func fillMissingFormReferences(tx *gorm.DB, departmentID uint64, assignments []m
 	return nil
 }
 
+// restoreSubmissions 按主记录、明细、字段值顺序恢复，并重映射部门和用户引用。
 func restoreSubmissions(tx *gorm.DB, departmentID uint64, submissions []model.Submission, rows []model.SubmissionRow, values []model.FieldValue, templateMap, versionMap, lineMap, shiftItemMap, userMap map[uint64]uint64, result *RestoreResult) (map[uint64]uint64, map[uint64]uint64, error) {
 	submissionMap := make(map[uint64]uint64, len(submissions))
 	for _, source := range submissions {

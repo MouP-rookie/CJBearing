@@ -1,3 +1,5 @@
+// 文件说明：日志数据 Excel 导出处理器，负责筛选、分组和生成工作簿。
+
 package httpapi
 
 import (
@@ -57,6 +59,7 @@ type exportSubmission struct {
 	Values            []exportValue
 }
 
+// exportData 校验权限和日期范围后导出授权产线及其子产线的数据。
 func (s *Server) exportData(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -261,6 +264,8 @@ func appendExportCell(current any, next any) any {
 	}
 	return fmt.Sprintf("%v、%v", current, next)
 }
+
+// loadExportSubmissions 一次性加载版本、用户、明细和字段值，保证导出历史可读。
 func (s *Server) loadExportSubmissions(req exportRequest, kinds []string) []exportSubmission {
 	var submissions []model.Submission
 	q := s.db.Where("line_id IN ? AND deleted_at IS NULL AND business_date BETWEEN ? AND ?", req.LineIDs, req.DateFrom, req.DateTo)

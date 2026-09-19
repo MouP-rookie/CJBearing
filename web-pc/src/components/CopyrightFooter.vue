@@ -1,3 +1,5 @@
+<!-- 文件说明：PC 页脚版权信息组件。 -->
+
 <template>
   <footer class="copyright-footer" aria-label="软件著作权信息">
     <div class="copyright-identity">

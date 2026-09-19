@@ -1,3 +1,5 @@
+<!-- 文件说明：部门维护页，仅超级管理员可新增、启停和删除部门。 -->
+
 <template>
   <div class="page departments-page">
     <div class="page-head">
@@ -88,6 +90,7 @@ function openEdit(row: any) {
   dialog.value = true
 }
 
+// 部门编码创建后不可修改，避免破坏隔离和归档标识。
 async function save() {
   if (!form.code.trim() || !form.name.trim()) {
     ElMessage.warning('请填写部门编码和名称')

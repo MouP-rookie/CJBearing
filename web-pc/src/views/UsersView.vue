@@ -1,3 +1,5 @@
+<!-- 文件说明：用户与权限页，维护账号、角色、部门和批量导入。 -->
+
 <template>
   <div class="page users-page">
     <div class="page-head">
@@ -193,6 +195,7 @@ function openCreate() {
   dialog.value = true
 }
 
+// 新建用户使用后端默认初始密码，并校验角色和部门范围。
 async function create() {
   if (!form.account.trim() || !form.name.trim() || !form.roleId || (auth.isSuperAdmin && !form.departmentId && !selectedRoleIsSuper.value)) {
     ElMessage.warning('请填写工号、用户名、角色和部门')
@@ -242,6 +245,7 @@ function changeRole(row: any) {
   roleDialog.value = true
 }
 
+// 角色和部门变更会影响登录端和可见数据范围，保存后应通知用户重新登录。
 async function saveRole() {
   if (!roleTarget.value || !roleForm.roleId) {
     ElMessage.warning('请选择角色')
@@ -293,6 +297,7 @@ async function downloadTemplate() {
   }
 }
 
+// 批量导入后逐行展示失败原因，成功记录由后端统一写入。
 async function submitImport() {
   if (!importFile.value) {
     ElMessage.warning('请先选择 Excel 文件')

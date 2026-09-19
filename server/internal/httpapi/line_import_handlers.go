@@ -1,3 +1,5 @@
+// 文件说明：产线 Excel 模板、批量导入和导入校验。
+
 package httpapi
 
 import (
@@ -37,6 +39,7 @@ type lineImportRowError struct {
 	Message string `json:"message"`
 }
 
+// lineImportTemplate 生成两级产线批量导入模板。
 func (s *Server) lineImportTemplate(c *gin.Context) {
 	f := excelize.NewFile()
 	sheet := "产线导入"
@@ -51,6 +54,7 @@ func (s *Server) lineImportTemplate(c *gin.Context) {
 	writeWorkbook(c, f, "产线批量导入模板.xlsx")
 }
 
+// importLines 先完整解析和行级校验，再在事务中创建根产线和子产线。
 func (s *Server) importLines(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
@@ -240,6 +244,7 @@ func (s *Server) importLines(c *gin.Context) {
 	response.OK(c, gin.H{"created": created, "failed": len(rowErrors), "errors": rowErrors})
 }
 
+// parseLineImportHeader 支持中文和英文列名，但必须包含编码和名称。
 func parseLineImportHeader(row []string) (lineImportColumns, error) {
 	columns := lineImportColumns{code: -1, name: -1, parent: -1, status: -1}
 	for index, value := range row {

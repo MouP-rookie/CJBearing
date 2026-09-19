@@ -1,3 +1,5 @@
+// 文件说明：从环境变量和 .env 加载运行配置。
+
 package config
 
 import (
@@ -19,6 +21,7 @@ type Config struct {
 	BackupDir       string
 }
 
+// Load 读取 .env 和环境变量，并校验数据库和 JWT 必需配置。
 func Load() (*Config, error) {
 	_ = godotenv.Load()
 	ttl := 12 * time.Hour

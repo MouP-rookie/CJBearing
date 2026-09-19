@@ -1,3 +1,5 @@
+/** 文件说明：PC 应用入口，安装 Pinia、路由和 Element Plus。 */
+
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import ElementPlus from 'element-plus'

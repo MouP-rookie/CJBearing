@@ -1,3 +1,5 @@
+<!-- 文件说明：Logo 设置页，维护当前部门的品牌图片。 -->
+
 <template>
   <div class="page settings-page">
     <div class="page-head">
