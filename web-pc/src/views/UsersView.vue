@@ -41,9 +41,9 @@
       </el-table-column>
       <el-table-column label="操作" width="330">
         <template #default="{ row }">
-          <el-button link :disabled="auth.allDepartments || row.id === auth.user?.id" @click="toggle(row)">{{ row.enabled ? '停用' : '启用' }}</el-button>
-          <el-button link :disabled="auth.allDepartments" @click="reset(row)">重置密码</el-button>
-          <el-button v-if="canChangeRole(row)" link type="danger" :disabled="auth.allDepartments" @click="changeRole(row)">角色/部门</el-button>
+          <el-button link :disabled="row.id === auth.user?.id" @click="toggle(row)">{{ row.enabled ? '停用' : '启用' }}</el-button>
+          <el-button link @click="reset(row)">重置密码</el-button>
+          <el-button v-if="canChangeRole(row)" link type="danger" @click="changeRole(row)">角色/部门</el-button>
           <el-tag v-else-if="row.id === auth.user?.id" size="small" type="info">本人</el-tag>
         </template>
       </el-table-column>

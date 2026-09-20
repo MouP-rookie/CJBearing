@@ -130,10 +130,6 @@ func (s *Server) updateUser(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if scope.AllDepartments {
-		response.Fail(c, http.StatusBadRequest, "department_required", "请先选择部门", nil)
-		return
-	}
 	id, ok := parseUint64(c, "id")
 	if !ok {
 		return
@@ -180,10 +176,12 @@ func (s *Server) updateUser(c *gin.Context) {
 		user.RoleID = req.RoleID
 	}
 	if current.Role.Code == "super_admin" {
-		if nextRole.Code == "super_admin" {
-			user.DepartmentID = nil
-		} else if req.DepartmentID != nil || req.RoleID != 0 {
-			departmentID, err := s.resolveUserDepartment(scope, req.DepartmentID, nextRole.Code)
+		if nextRole.Code != "super_admin" {
+			requestedDepartmentID := req.DepartmentID
+			if requestedDepartmentID == nil {
+				requestedDepartmentID = user.DepartmentID
+			}
+			departmentID, err := s.resolveUserDepartment(scope, requestedDepartmentID, nextRole.Code)
 			if err != nil {
 				response.Fail(c, http.StatusBadRequest, "validation_error", err.Error(), nil)
 				return
@@ -203,9 +201,29 @@ func (s *Server) updateUser(c *gin.Context) {
 		}
 		user.Enabled = *req.Enabled
 	}
-	if err := s.db.Save(&user).Error; err != nil {
+	updates := map[string]any{}
+	if strings.TrimSpace(req.Name) != "" {
+		updates["name"] = strings.TrimSpace(req.Name)
+	}
+	if req.RoleID != 0 {
+		updates["role_id"] = req.RoleID
+	}
+	updates["department_id"] = user.DepartmentID
+	if req.Enabled != nil {
+		updates["enabled"] = *req.Enabled
+	}
+	if len(updates) > 0 {
+		if err := s.db.Model(&model.User{}).Where("id = ?", user.ID).Updates(updates).Error; err != nil {
+			response.Fail(c, 500, "save_failed", "保存用户失败", err.Error())
+			return
+		}
+	}
+	if err := s.db.Preload("Role").Preload("Department").First(&user, user.ID).Error; err != nil {
 		response.Fail(c, 500, "save_failed", "保存用户失败", err.Error())
 		return
+	}
+	if user.DepartmentID != nil {
+		c.Set("scope_department_id", *user.DepartmentID)
 	}
 	s.audit(c, "user", user.ID, "update", before, user)
 	response.OK(c, user)
@@ -215,10 +233,6 @@ func (s *Server) updateUser(c *gin.Context) {
 func (s *Server) resetUserPassword(c *gin.Context) {
 	scope, ok := s.scopeOrFail(c)
 	if !ok {
-		return
-	}
-	if scope.AllDepartments {
-		response.Fail(c, http.StatusBadRequest, "department_required", "请先选择部门", nil)
 		return
 	}
 	id, ok := parseUint64(c, "id")
@@ -258,6 +272,9 @@ func (s *Server) resetUserPassword(c *gin.Context) {
 	if err := s.db.Model(&user).Update("password_hash", hash).Error; err != nil {
 		response.Fail(c, 500, "save_failed", "重置密码失败", err.Error())
 		return
+	}
+	if user.DepartmentID != nil {
+		c.Set("scope_department_id", *user.DepartmentID)
 	}
 	s.audit(c, "user", user.ID, "reset_password", nil, gin.H{"account": user.Account})
 	response.NoContent(c)
