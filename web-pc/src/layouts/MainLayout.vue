@@ -33,6 +33,7 @@
           v-if="auth.isSuperAdmin"
           class="department-switch"
           :model-value="auth.selectedDepartmentId"
+          :disabled="changingDepartment"
           @change="changeDepartment"
         >
           <el-option label="全部部门" :value="0" />
@@ -51,14 +52,38 @@
     <div class="page-context">
       <p class="breadcrumb">质量过程控制 / {{ route.meta.title || '工作台' }}</p>
       <h1>{{ pageTitle }}</h1>
+      <div v-if="auth.allDepartments && scopedPages.has(route.path)" class="department-notice">
+        <span>当前查看全部部门。新增、编辑或提交前，请先选择操作部门。</span>
+        <el-button type="primary" plain @click="auth.departmentPickerOpen = true">选择部门</el-button>
+      </div>
     </div>
     <el-main class="main-stage"><router-view /></el-main>
+    <el-dialog
+      v-model="auth.departmentPickerOpen"
+      title="选择操作部门"
+      width="min(420px, 92vw)"
+      :close-on-click-modal="!changingDepartment"
+      :close-on-press-escape="!changingDepartment"
+      :show-close="!changingDepartment"
+      @closed="pendingDepartmentId = undefined"
+    >
+      <p>选定部门后会重新加载当前页面，请在切换后继续操作。</p>
+      <el-select v-model="pendingDepartmentId" placeholder="请选择部门" style="width:100%" :disabled="changingDepartment">
+        <el-option v-for="department in enabledDepartments" :key="department.id" :label="department.name" :value="department.id" />
+      </el-select>
+      <p v-if="!enabledDepartments.length">没有可用部门，请先在「部门」页面启用一个部门。</p>
+      <template #footer>
+        <el-button :disabled="changingDepartment" @click="auth.departmentPickerOpen = false">取消</el-button>
+        <el-button type="primary" :disabled="!pendingDepartmentId" :loading="changingDepartment" @click="pendingDepartmentId && changeDepartment(pendingDepartmentId)">切换部门</el-button>
+      </template>
+    </el-dialog>
     <CopyrightFooter />
   </el-container>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
+import { ElMessage } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import { SwitchButton } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
@@ -69,9 +94,23 @@ const auth = useAuthStore()
 const brandLogo = computed(() => auth.brandLogoDataUrl)
 const route = useRoute()
 const router = useRouter()
+const scopedPages = new Set(['/shifts', '/products', '/forms', '/assignments', '/execution', '/logs'])
+const enabledDepartments = computed(() => auth.departments.filter(department => department.enabled))
+const pendingDepartmentId = ref<number>()
+const changingDepartment = ref(false)
 const pageTitle = computed(() => ({ '/': '工作台', '/users': '用户与权限', '/roles': '角色内部权限', '/departments': '部门维护', '/lines': '产线配置', '/shifts': '班次配置', '/products': '产品维护', '/forms': '任务与表单', '/logs': '日志与导出', '/backups': '数据库备份', '/void-reasons': '废除原因', '/settings': 'Logo 设置' }[route.path] || '工作台'))
 // 切换部门后刷新页面，确保所有页面重新按新部门范围加载。
-async function changeDepartment(value: number | string) { await auth.selectDepartment(Number(value)); window.location.reload() }
+async function changeDepartment(value: number | string) {
+  if (changingDepartment.value) return
+  changingDepartment.value = true
+  try {
+    await auth.selectDepartment(Number(value))
+    window.location.reload()
+  } catch (error: any) {
+    ElMessage.error(error.message || '切换部门失败')
+    changingDepartment.value = false
+  }
+}
 async function logout() { await auth.logout(); router.push('/login') }
 </script>
 
@@ -103,6 +142,7 @@ async function logout() { await auth.logout(); router.push('/login') }
 .breadcrumb { margin: 0 0 5px; color: var(--bench-ink-soft); font-size: 11px; letter-spacing: .08em; }
 .page-context h1 { margin: 0; color: var(--bench-head); font-size: 26px; letter-spacing: -.025em; }
 .main-stage { flex: 1; min-width: 0; padding: 0; }
+.department-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-top: 12px; font-size: 13px; }
 @media (max-width: 1100px) { .topbar { align-items: flex-start; } .topnav { order: 3; width: 100%; flex-basis: 100%; overflow-x: auto; } .account-block { margin-left: auto; } }
 @media (max-width: 700px) { .topbar { padding: 12px 16px; } .brand-copy span, .account-copy, .department-switch, .department-label { display: none; } .page-context { padding: 18px 16px 0; } }
 </style>

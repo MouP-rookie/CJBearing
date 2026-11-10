@@ -2,9 +2,10 @@
 
 import axios from 'axios'
 export const api = axios.create({ baseURL:'/api/v1', timeout:30000, withCredentials:true })
+export const departmentStorageKey = 'bearing-inspection.department'
 // 默认使用顶部部门范围；页面为具体操作指定部门时保留该请求的范围。
 api.interceptors.request.use(config => {
-  const departmentId = typeof localStorage === 'undefined' ? '' : localStorage.getItem('bearing-inspection.department')
+  const departmentId = typeof sessionStorage === 'undefined' ? '' : sessionStorage.getItem(departmentStorageKey)
   if (departmentId && !config.headers.has('X-Department-ID')) config.headers.set('X-Department-ID', departmentId)
   return config
 })

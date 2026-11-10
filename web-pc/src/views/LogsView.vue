@@ -99,8 +99,8 @@
               </el-table-column>
               <el-table-column label="操作" width="110" fixed="right">
                 <template #default="{ row: detail, $index }">
-                  <el-button v-if="isFirstDetail(submission, detail, $index) && detail.status === 'active' && canVoidDetail(detail)" link type="danger" @click="openRowVoidDialog(submission, detail)">废除</el-button>
-                  <el-button v-else-if="isFirstDetail(submission, detail, $index) && detail.status === 'voided' && canRestoreDetail(detail)" link @click="restoreRow(submission, detail)">恢复</el-button>
+                  <DepartmentActionButton v-if="isFirstDetail(submission, detail, $index) && detail.status === 'active' && canVoidDetail(detail)" link type="danger" @click="openRowVoidDialog(submission, detail)">废除</DepartmentActionButton>
+                  <DepartmentActionButton v-else-if="isFirstDetail(submission, detail, $index) && detail.status === 'voided' && canRestoreDetail(detail)" link @click="restoreRow(submission, detail)">恢复</DepartmentActionButton>
                   <span v-else-if="isFirstDetail(submission, detail, $index)" class="state-note">无权操作</span>
                 </template>
               </el-table-column>
@@ -133,8 +133,8 @@
       <el-table-column prop="repeatReason" label="重复首检原因" min-width="150" />
       <el-table-column v-if="canVoid || canRestore" label="操作" width="120" fixed="right">
         <template #default="{ row }">
-          <el-button v-if="canVoidSubmission(row) && row.status !== 'voided'" link type="danger" @click="openSubmissionVoidDialog(row)">整条废除</el-button>
-          <el-button v-else-if="canRestoreSubmission(row) && row.status === 'voided'" link @click="restoreRecord(row)">整条恢复</el-button>
+          <DepartmentActionButton v-if="canVoidSubmission(row) && row.status !== 'voided'" link type="danger" @click="openSubmissionVoidDialog(row)">整条废除</DepartmentActionButton>
+          <DepartmentActionButton v-else-if="canRestoreSubmission(row) && row.status === 'voided'" link @click="restoreRecord(row)">整条恢复</DepartmentActionButton>
         </template>
       </el-table-column>
     </el-table>
@@ -173,6 +173,7 @@
 </template>
 
 <script setup lang="ts">
+import DepartmentActionButton from '@/components/DepartmentActionButton.vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '@/api'
@@ -363,12 +364,10 @@ async function exportData() {
 }
 
 function canVoidSubmission(row: any) {
-  if (auth.allDepartments) return false
   return auth.can('submission.void_scope') || (auth.can('submission.void_own') && row.createdBy === auth.user?.id)
 }
 
 function canRestoreSubmission(row: any) {
-  if (auth.allDepartments) return false
   return auth.can('submission.edit_scope') || (auth.can('submission.edit_own') && row.createdBy === auth.user?.id)
 }
 
@@ -377,12 +376,10 @@ function isFirstDetail(submission: any, detail: any, index: number) {
 }
 
 function canVoidDetail(detail: any) {
-  if (auth.allDepartments) return false
   return auth.can('submission.void_scope') || (auth.can('submission.void_own') && detail.operatorId === auth.user?.id)
 }
 
 function canRestoreDetail(detail: any) {
-  if (auth.allDepartments) return false
   return auth.can('submission.edit_scope') || (auth.can('submission.edit_own') && detail.operatorId === auth.user?.id)
 }
 

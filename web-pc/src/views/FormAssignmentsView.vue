@@ -2,7 +2,7 @@
 
 <template>
   <div class="page assignment-page">
-    <div class="page-head"><div><p class="section-label">表单分发</p><h2 class="page-title">任务与报表分配</h2><p class="page-desc">把已发布的表单版本分配到产线。分配父产线时，其全部子产线会自动使用同一版本；共享模板可以为不同产线指定不同版本。</p></div><el-button type="primary" size="large" :disabled="auth.allDepartments || !selectedTemplate || !publishedVersions.length" :loading="saving" @click="save">保存分配</el-button></div>
+    <div class="page-head"><div><p class="section-label">表单分发</p><h2 class="page-title">任务与报表分配</h2><p class="page-desc">把已发布的表单版本分配到产线。分配父产线时，其全部子产线会自动使用同一版本；共享模板可以为不同产线指定不同版本。</p></div><DepartmentActionButton type="primary" size="large" :disabled="!selectedTemplate || !publishedVersions.length" :loading="saving" @click="save">保存分配</DepartmentActionButton></div>
 
     <div class="assignment-grid">
       <aside class="panel template-panel">
@@ -14,11 +14,11 @@
 
       <main class="panel line-panel">
         <template v-if="selectedTemplate">
-          <div class="assignment-header"><div><span class="kind-badge">{{ kindName(selectedTemplate.kind) }}</span><h3>{{ selectedTemplate.name }}</h3><p>选择每条产线使用的已发布版本</p></div><el-button plain :disabled="auth.allDepartments || !publishedVersions.length" @click="assignLatest">全部使用最新版本</el-button></div>
+          <div class="assignment-header"><div><span class="kind-badge">{{ kindName(selectedTemplate.kind) }}</span><h3>{{ selectedTemplate.name }}</h3><p>选择每条产线使用的已发布版本</p></div><DepartmentActionButton plain :disabled="!publishedVersions.length" @click="assignLatest">全部使用最新版本</DepartmentActionButton></div>
           <div v-if="!publishedVersions.length" class="publish-hint">
             <span v-if="latestDraft">该模板目前只有草稿版本 v{{ latestDraft.versionNo }}，发布后才能分配到产线。</span>
             <span v-else>该模板还没有任何版本，请先到「任务与表单」新建并编辑模板。</span>
-            <el-button v-if="latestDraft" size="small" type="warning" :disabled="auth.allDepartments" :loading="publishing" @click="publishLatestDraft">发布草稿 v{{ latestDraft.versionNo }}</el-button>
+            <DepartmentActionButton v-if="latestDraft" size="small" type="warning" :loading="publishing" @click="publishLatestDraft">发布草稿 v{{ latestDraft.versionNo }}</DepartmentActionButton>
           </div>
           <el-table :data="pagedLineRows" border>
             <el-table-column label="产线" min-width="250"><template #default="{ row }"><span class="line-name" :class="{ child: row.parentId }">{{ row.parentId ? '└ ' : '' }}{{ row.lineName }}</span><el-tag v-if="row.hasChildren" size="small" type="info" class="cascade-tag">父产线 · 同步子线</el-tag></template></el-table-column>
@@ -35,6 +35,7 @@
 </template>
 
 <script setup lang="ts">
+import DepartmentActionButton from '@/components/DepartmentActionButton.vue'
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { ArrowRight } from '@element-plus/icons-vue'

@@ -20,7 +20,11 @@
       <div v-if="formsLoading" class="task-loading" role="status"><van-loading size="20" />正在加载当前产线任务，仍可切换产线</div>
       <div v-else-if="formsError" class="empty-state" role="alert"><strong>任务加载失败</strong><p>{{ formsError }}</p><button type="button" class="retry-button" @click="reloadForms">重试加载</button><button type="button" class="retry-button" @click="openLinePicker">切换产线</button></div>
       <div v-else-if="forms.length" class="form-list">
-        <button v-for="form in forms" :key="form.versionId" class="form-card" :disabled="!online" @click="openForm(form)"><span class="form-type">{{ kindName(form.kind) }}</span><span class="form-copy"><strong>{{ form.name }}</strong><small>版本 v{{ form.versionNo }} · 点击开始填写</small></span><van-icon name="arrow" /></button>
+        <button v-for="form in forms" :key="form.versionId" class="form-card" :class="{ pending: isPending(form.templateId) }" :disabled="!online" @click="openForm(form)">
+          <span class="form-type">{{ kindName(form.kind) }}</span>
+          <span class="form-copy"><strong>{{ form.name }}</strong><small>版本 v{{ form.versionNo }} · <span v-if="isPending(form.templateId)" class="pending-label">当班未填报</span><template v-else>点击开始填写</template></small></span>
+          <van-icon name="arrow" />
+        </button>
       </div>
       <div v-else class="empty-state"><strong>还没有可填写的表单</strong><p>请选择产线，或联系管理员发布任务。</p></div>
     </main>
@@ -60,7 +64,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { showConfirmDialog, showToast } from 'vant'
-import type { Line } from '@shared'
+import { useSubmissionStatus, type Line } from '@shared'
 import { api } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 
@@ -77,6 +81,10 @@ const linesError = ref('')
 const formsLoading = ref(false)
 const formsError = ref('')
 const online = ref(navigator.onLine)
+const { isPending } = useSubmissionStatus(
+  () => online.value && lineId.value ? { lineId: lineId.value } : undefined,
+  async (params, signal) => (await api.get('/execution/form-status', { params, signal })).data.submittedTemplateIds,
+)
 const selectedLineName = computed(() => lines.value.find(item => item.id === lineId.value)?.name || '请选择产线')
 let lineRequestID = 0
 let formRequestID = 0
@@ -243,6 +251,9 @@ onUnmounted(() => {
 .form-card { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 11px; width: 100%; padding: 15px 12px; border: 1px solid var(--bench-line); border-left: 4px solid var(--bench-steel); color: var(--bench-ink); background: #fffdf8; text-align: left; }
 .form-card:disabled { opacity: .5; }
 .form-card:not(:disabled):active { background: #edf3f3; }
+.form-card.pending { border-left-color: var(--bench-green); background: #eff8f1; }
+.form-card.pending:not(:disabled):active { background: #e4f3e8; }
+.form-card .pending-label { color: #206444; font-weight: 700; }
 .form-type { padding: 4px 6px; color: var(--bench-steel-deep); border: 1px solid #b5ccd2; font-size: 10px; font-weight: 700; }
 .form-copy strong, .form-copy small { display: block; }
 .form-copy strong { font-size: 15px; }

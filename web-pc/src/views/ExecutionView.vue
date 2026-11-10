@@ -3,19 +3,27 @@
 <template>
   <div class="page execution-page">
     <div class="page-head"><div><p class="section-label">PC 填报</p><h2 class="page-title">首末检执行中心</h2><p class="page-desc">选择产线和任务后直接填写、确认并提交，提交记录与 PDA 使用同一套日志。</p></div><div class="today-chip"><span>业务日期</span><strong>{{ businessDate }}</strong></div></div>
-    <el-alert v-if="auth.allDepartments" type="info" :closable="false" show-icon title="当前为全部部门只读模式，请在顶栏选择具体部门后再进行填报。" class="scope-alert" />
 
     <div class="execution-grid">
       <aside class="panel selection-panel">
         <div class="panel-heading"><span>01</span><div><strong>选择产线与任务</strong><small>只显示当前账号有权限的产线</small></div></div>
         <el-select v-model="lineId" placeholder="请选择产线" class="line-select" @change="loadForms"><el-option v-for="line in lines" :key="line.id" :label="line.name" :value="line.id" /></el-select>
         <div class="kind-filter"><button v-for="item in kindFilters" :key="item.value" :class="{ active: kindFilter === item.value }" @click="kindFilter = item.value">{{ item.label }}</button></div>
-        <div class="task-list"><button v-for="form in pagedForms" :key="form.versionId" class="task-item" :class="{ active: selectedForm?.versionId === form.versionId }" @click="selectForm(form)"><span class="task-kind">{{ kindName(form.kind) }}</span><span><strong>{{ form.name }}</strong><small>版本 v{{ form.versionNo }} · {{ form.code }}</small></span><el-icon><ArrowRight /></el-icon></button><div v-if="lineId && !filteredForms.length" class="empty-small">该产线当前没有此类任务</div><div v-if="!lineId" class="empty-small">先选择一条产线</div></div>
+        <div class="task-list">
+          <button v-for="form in pagedForms" :key="form.versionId" class="task-item" :class="{ active: selectedForm?.versionId === form.versionId, pending: isPending(form.templateId) }" @click="selectForm(form)">
+            <span class="task-kind">{{ kindName(form.kind) }}</span>
+            <span><strong>{{ form.name }}</strong><small>版本 v{{ form.versionNo }} · {{ form.code }}<span v-if="isPending(form.templateId)" class="pending-label"> · {{ selectedForm ? '所选班次未填报' : '当班未填报' }}</span></small></span>
+            <el-icon><ArrowRight /></el-icon>
+          </button>
+          <div v-if="lineId && !filteredForms.length" class="empty-small">该产线当前没有此类任务</div>
+          <div v-if="!lineId" class="empty-small">先选择一条产线</div>
+        </div>
         <AppPagination v-if="filteredForms.length" v-model:page="taskPage" v-model:size="taskSize" :total="filteredForms.length" :page-sizes="[10, 20, 50]" />
       </aside>
 
       <main class="panel fill-panel">
-        <template v-if="selectedForm">
+        <div v-if="auth.allDepartments" class="empty-panel"><div><strong>先选择部门再填写</strong><p>请使用页面上方的「选择部门」，切换后再开始填报。</p></div></div>
+        <template v-else-if="selectedForm">
           <div class="fill-header"><div><span class="kind-badge">{{ kindName(selectedForm.kind) }}</span><h3>{{ selectedForm.name }}</h3><p>模板版本 v{{ selectedForm.versionNo }}</p></div><el-tag v-if="selectedForm.kind === 'first_inspection'" type="success">首检完成后日历变绿</el-tag></div>
 
           <div class="fill-context">
@@ -39,7 +47,7 @@
             <el-button v-if="selectedForm.kind === 'registration'" plain :icon="Plus" @click="rows.push(makeRow())">增加一条登记明细</el-button>
           </div>
 
-          <footer class="fill-actions"><div class="submit-note">提交后日期和班次将锁定，修改会保留审计记录。</div><el-button type="primary" size="large" :disabled="auth.allDepartments" :loading="submitting" @click="submit">确认提交</el-button></footer>
+          <footer class="fill-actions"><div class="submit-note">提交后日期和班次将锁定，修改会保留审计记录。</div><el-button type="primary" size="large" :loading="submitting" @click="submit">确认提交</el-button></footer>
         </template>
         <div v-else class="empty-panel"><div><strong>选择左侧任务开始填报</strong><p>PC 和 PDA 的填报记录会进入同一份日志。</p></div></div>
       </main>
@@ -54,7 +62,7 @@ import { ArrowRight, Delete, Plus } from '@element-plus/icons-vue'
 import { api } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import AppPagination from '@/components/AppPagination.vue'
-import { formatDateTime, type FieldDefinition } from '@shared'
+import { formatDateTime, useSubmissionStatus, type FieldDefinition } from '@shared'
 
 type FormRow = { values: Record<string, string[]>; multiValues: Record<string, string[]> }
 const auth = useAuthStore()
@@ -73,6 +81,25 @@ const taskSize = ref(10)
 const businessDate = ref(new Date().toLocaleDateString('sv-SE'))
 const repeatReason = ref('')
 const submitting = ref(false)
+const { isPending, refresh: refreshSubmissionStatus } = useSubmissionStatus(
+  () => {
+    if (auth.allDepartments || !lineId.value) return
+    if (!selectedForm.value) return { lineId: lineId.value }
+    if (!businessDate.value || !shiftItemId.value) return
+    return { lineId: lineId.value, businessDate: businessDate.value, shiftPlanItemId: shiftItemId.value }
+  },
+  async (params, signal) => {
+    const { data } = await api.get('/execution/form-status', { params, signal })
+    if (!signal.aborted && !params.businessDate && !selectedForm.value && data.businessDate && data.shiftPlanItemId) {
+      if (!shifts.value.some(item => item.id === data.shiftPlanItemId)) await loadShifts(signal)
+      if (!signal.aborted && !selectedForm.value && shifts.value.some(item => item.id === data.shiftPlanItemId)) {
+        businessDate.value = data.businessDate
+        shiftItemId.value = data.shiftPlanItemId
+      }
+    }
+    return data.submittedTemplateIds
+  },
+)
 const kindFilters = [{ label: '全部', value: 'all' }, { label: '首检', value: 'first_inspection' }, { label: '末检', value: 'final_inspection' }, { label: '报表', value: 'report' }, { label: '登记表', value: 'registration' }]
 const selectedLineName = computed(() => lines.value.find(line => line.id === lineId.value)?.name || '')
 const filteredForms = computed(() => kindFilter.value === 'all' ? forms.value : forms.value.filter(form => form.kind === kindFilter.value))
@@ -88,10 +115,43 @@ function outOfRange(field: FieldDefinition, value: string) { const number = Numb
 // 只把末级产线作为填报入口，父产线用于组织结构。
 async function loadLines() { const { data } = await api.get('/execution/lines'); lines.value = data.items; const leaves = lines.value.filter(line => !lines.value.some(child => child.parentId === line.id)).sort((a, b) => String(a.code || '').localeCompare(String(b.code || ''), 'zh-CN', { numeric: true, sensitivity: 'base' }) || a.id - b.id); if (leaves.length) { lineId.value = leaves[0].id; await loadForms() } }
 // 切换产线后同时刷新可用表单和产品。
-async function loadForms() { forms.value = []; selectedForm.value = undefined; products.value = []; if (!lineId.value) return; const { data } = await api.get('/execution/forms', { params: { lineId: lineId.value } }); forms.value = data.items; try { const prodRes = await api.get('/execution/products', { params: { lineId: lineId.value } }); products.value = prodRes.data.items || [] } catch {} }
-async function loadShifts() { const { data } = await api.get('/execution/shifts'); shifts.value = data.items || []; shiftItemId.value = data.current?.id || shifts.value[0]?.id }
+let formsRequestID = 0
+async function loadForms() {
+  const requestID = ++formsRequestID
+  const selectedLine = lineId.value
+  forms.value = []
+  selectedForm.value = undefined
+  products.value = []
+  if (!selectedLine) return
+  const params = { lineId: selectedLine }
+  const { data } = await api.get('/execution/forms', { params })
+  if (requestID !== formsRequestID) return
+  forms.value = data.items || []
+  try {
+    const { data } = await api.get('/execution/products', { params })
+    if (requestID === formsRequestID) products.value = data.items || []
+  } catch {}
+}
+async function loadShifts(signal?: AbortSignal) {
+  if (auth.allDepartments) return
+  const { data } = await api.get('/execution/shifts', { signal })
+  if (signal?.aborted) return
+  shifts.value = data.items || []
+  if (data.businessDate) businessDate.value = data.businessDate
+  shiftItemId.value = data.current?.id || shifts.value[0]?.id
+}
 // 选择任务时按提交版本 Schema 动态生成字段和默认值。
-async function selectForm(form: any) { const { data } = await api.get(`/execution/forms/${form.versionId}`); const schema = typeof data.version.schema === 'string' ? JSON.parse(data.version.schema) : data.version.schema; fields.value = (schema.fields || []).sort((a: any, b: any) => (a.sortOrder || 0) - (b.sortOrder || 0)); selectedForm.value = { ...form, versionNo: data.version.versionNo, schema }; resetRows() }
+let detailRequestID = 0
+async function selectForm(form: any) {
+  const requestID = ++detailRequestID
+  const lineRequestID = formsRequestID
+  const { data } = await api.get(`/execution/forms/${form.versionId}`)
+  if (requestID !== detailRequestID || lineRequestID !== formsRequestID) return
+  const schema = typeof data.version.schema === 'string' ? JSON.parse(data.version.schema) : data.version.schema
+  fields.value = (schema.fields || []).sort((a: any, b: any) => (a.sortOrder || 0) - (b.sortOrder || 0))
+  selectedForm.value = { ...form, versionNo: data.version.versionNo, schema }
+  resetRows()
+}
 // 提交前把页面值铺平为后端字段值数组，每个明细独立保存。
 async function submit() {
   if (!selectedForm.value || !lineId.value || !shiftItemId.value) { ElMessage.warning('请先选择产线、任务和班次'); return }
@@ -100,12 +160,14 @@ async function submit() {
       if (field.required && field.type !== 'static_text' && field.type !== 'multi_select' && !row.values[field.key]?.some(value => value !== '')) { ElMessage.warning(`请填写“${field.label}”`); return } } }
   const payloadRows = rows.value.map((row, rowIndex) => ({ rowNo: rowIndex + 1, values: fields.value.flatMap(field => { if (field.type === 'multi_select') return (row.multiValues[field.key] || []).map((value, index) => ({ fieldKey: field.key, valueType: field.type, valueText: value, repeatIndex: index, source: 'manual' })); return (row.values[field.key] || []).map((value, index) => ({ fieldKey: field.key, valueType: field.type, valueText: value, valueNumber: field.type === 'number' && value !== '' && !Number.isNaN(Number(value)) ? Number(value) : undefined, repeatIndex: index, source: value === defaultValue(field, row) ? 'default' : 'manual' })) }) }))
   submitting.value = true
-  try { await api.post('/execution/submissions', { templateId: selectedForm.value.templateId, versionId: selectedForm.value.versionId, lineId: lineId.value, businessDate: businessDate.value, shiftPlanItemId: shiftItemId.value, repeatReason: repeatReason.value, source: 'pc', clientTime: new Date().toISOString(), rows: payloadRows }); ElMessage.success('填报已提交'); repeatReason.value = ''; resetRows() } catch (error: any) { ElMessage.error(error.message || '提交失败') } finally { submitting.value = false }
+  try { await api.post('/execution/submissions', { templateId: selectedForm.value.templateId, versionId: selectedForm.value.versionId, lineId: lineId.value, businessDate: businessDate.value, shiftPlanItemId: shiftItemId.value, repeatReason: repeatReason.value, source: 'pc', clientTime: new Date().toISOString(), rows: payloadRows }); ElMessage.success('填报已提交'); refreshSubmissionStatus(); repeatReason.value = ''; resetRows() } catch (error: any) { ElMessage.error(error.message || '提交失败') } finally { submitting.value = false }
 }
-onMounted(async () => { await Promise.all([loadLines(), loadShifts()]) })
+onMounted(async () => {
+  try { await loadShifts() } catch (error: any) { ElMessage.error(error.message || '读取班次失败') }
+  await loadLines()
+})
 </script>
 
-<style scoped>.scope-alert{margin:-12px 0 18px}</style>
 
 <style scoped>
 .execution-page .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; }
@@ -129,6 +191,9 @@ onMounted(async () => { await Promise.all([loadLines(), loadShifts()]) })
 .task-item { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 9px; width: 100%; padding: 11px 8px; border: 1px solid transparent; border-bottom-color: var(--bench-line); color: var(--bench-ink); background: transparent; text-align: left; cursor: pointer; }
 .task-item:hover { background: #f5f8f6; }
 .task-item.active { border-color: var(--bench-steel); background: #eaf1f3; }
+.task-item.pending { border-left: 3px solid var(--bench-green); background: #eff8f1; }
+.task-item.pending:hover, .task-item.pending.active { background: #e4f3e8; }
+.task-item .pending-label { color: #206444; font-weight: 700; }
 .task-kind { padding: 4px 5px; color: var(--bench-steel-deep); border: 1px solid #b5ccd2; font-size: 10px; font-weight: 700; }
 .task-item strong, .task-item small { display: block; }
 .task-item strong { font-size: 13px; }

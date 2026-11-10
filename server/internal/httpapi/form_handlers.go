@@ -5,11 +5,13 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"bearing-inspection/internal/httpapi/response"
 	"bearing-inspection/internal/model"
@@ -27,12 +29,33 @@ type formTemplateRequest struct {
 	Schema json.RawMessage `json:"schema"`
 }
 
+func respondTemplateCodeConflict(c *gin.Context, err error, code string) bool {
+	return respondUniqueConflict(c, err, "ux_form_templates_department_code_active", "template_code_conflict",
+		fmt.Sprintf("当前部门已使用模板编码「%s」，同一部门内的模板编码不能重复。", code))
+}
+
+func validateTemplateIdentity(code, name string) error {
+	switch {
+	case code == "":
+		return errors.New("模板编码不能为空")
+	case name == "":
+		return errors.New("模板名称不能为空")
+	case utf8.RuneCountInString(code) > 96:
+		return errors.New("模板编码不能超过 96 个字符")
+	case utf8.RuneCountInString(name) > 128:
+		return errors.New("模板名称不能超过 128 个字符")
+	default:
+		return nil
+	}
+}
+
 type formTemplateListItem struct {
 	model.FormTemplate
-	AssignmentCount int64 `json:"assignmentCount"`
-	SubmissionCount int64 `json:"submissionCount"`
-	IsUnused        bool  `json:"isUnused"`
-	CanDelete       bool  `json:"canDelete"`
+	CreatedByName   string `json:"createdByName"`
+	AssignmentCount int64  `json:"assignmentCount"`
+	SubmissionCount int64  `json:"submissionCount"`
+	IsUnused        bool   `json:"isUnused"`
+	CanDelete       bool   `json:"canDelete"`
 }
 
 // listFormTemplates 返回部门范围内模板，并附带产线分配和填报使用情况。
@@ -59,6 +82,25 @@ func (s *Server) listFormTemplates(c *gin.Context) {
 		response.Fail(c, 500, "db_error", "查询模板失败", err.Error())
 		return
 	}
+	creatorIDs := make([]uint64, 0, len(templates))
+	for _, tpl := range templates {
+		creatorIDs = append(creatorIDs, tpl.CreatedBy)
+	}
+	creatorNames := make(map[uint64]string, len(creatorIDs))
+	if len(creatorIDs) > 0 {
+		var creators []struct {
+			ID   uint64
+			Name string
+		}
+		// 已停用或软删除的账户仍可作为历史创建人显示。
+		if err := s.db.Unscoped().Model(&model.User{}).Select("id", "name").Where("id IN ?", creatorIDs).Find(&creators).Error; err != nil {
+			response.Fail(c, 500, "db_error", "查询模板创建人失败", err.Error())
+			return
+		}
+		for _, creator := range creators {
+			creatorNames[creator.ID] = creator.Name
+		}
+	}
 	items := make([]formTemplateListItem, 0, len(templates))
 	for _, tpl := range templates {
 		assignmentCount, submissionCount, err := s.formTemplateUsage(tpl.ID)
@@ -68,6 +110,7 @@ func (s *Server) listFormTemplates(c *gin.Context) {
 		}
 		items = append(items, formTemplateListItem{
 			FormTemplate:    tpl,
+			CreatedByName:   creatorNames[tpl.CreatedBy],
 			AssignmentCount: assignmentCount,
 			SubmissionCount: submissionCount,
 			IsUnused:        assignmentCount == 0 && submissionCount == 0,
@@ -95,12 +138,12 @@ func (s *Server) createFormTemplate(c *gin.Context) {
 	}
 	schema, err := parseRawSchema(req.Schema)
 	if err != nil {
-		response.Fail(c, 400, "validation_error", "表单结构错误", err.Error())
+		response.Fail(c, 400, "validation_error", "表单结构错误："+err.Error(), nil)
 		return
 	}
 	tpl := model.FormTemplate{DepartmentID: departmentID, Code: strings.TrimSpace(req.Code), Name: strings.TrimSpace(req.Name), Kind: req.Kind, CreatedBy: c.GetUint64("user_id")}
-	if tpl.Code == "" || tpl.Name == "" {
-		response.Fail(c, 400, "validation_error", "编码和名称不能为空", nil)
+	if err := validateTemplateIdentity(tpl.Code, tpl.Name); err != nil {
+		response.Fail(c, 400, "validation_error", err.Error(), nil)
 		return
 	}
 	err = s.db.Transaction(func(tx *gorm.DB) error {
@@ -111,7 +154,9 @@ func (s *Server) createFormTemplate(c *gin.Context) {
 		return tx.Create(&model.FormVersion{TemplateID: tpl.ID, VersionNo: 1, Schema: datatypes.JSON(schemaJSON), Status: model.VersionDraft, CreatedBy: tpl.CreatedBy}).Error
 	})
 	if err != nil {
-		response.Fail(c, 409, "create_failed", "模板创建失败", err.Error())
+		if !respondTemplateCodeConflict(c, err, tpl.Code) {
+			response.Fail(c, 500, "create_failed", "模板创建失败", err.Error())
+		}
 		return
 	}
 	s.audit(c, "form_template", tpl.ID, "create", nil, tpl)
@@ -171,15 +216,20 @@ func (s *Server) createFormVersion(c *gin.Context) {
 	}
 	schema, err := parseRawSchema(req.Schema)
 	if err != nil {
-		response.Fail(c, 400, "validation_error", "表单结构错误", err.Error())
+		response.Fail(c, 400, "validation_error", "表单结构错误："+err.Error(), nil)
 		return
 	}
 	var maxVersion int
-	_ = s.db.Model(&model.FormVersion{}).Where("template_id = ?", id).Select("COALESCE(MAX(version_no),0)").Scan(&maxVersion).Error
+	if err := s.db.Model(&model.FormVersion{}).Where("template_id = ?", id).Select("COALESCE(MAX(version_no),0)").Scan(&maxVersion).Error; err != nil {
+		response.Fail(c, 500, "db_error", "读取当前模板版本号失败", err.Error())
+		return
+	}
 	schemaJSON, _ := json.Marshal(schema)
 	version := model.FormVersion{TemplateID: id, VersionNo: maxVersion + 1, Schema: datatypes.JSON(schemaJSON), Status: model.VersionDraft, CreatedBy: c.GetUint64("user_id")}
 	if err := s.db.Create(&version).Error; err != nil {
-		response.Fail(c, 500, "create_failed", "创建版本失败", err.Error())
+		if !respondUniqueConflict(c, err, "form_versions_template_id_version_no_key", "template_version_conflict", "该模板刚生成了新版本，请重试保存草稿。") {
+			response.Fail(c, 500, "create_failed", "创建版本失败", err.Error())
+		}
 		return
 	}
 	s.audit(c, "form_version", version.ID, "create", nil, version)
@@ -346,6 +396,10 @@ func (s *Server) copyFormTemplate(c *gin.Context) {
 		return
 	}
 	target := model.FormTemplate{DepartmentID: source.DepartmentID, Code: strings.TrimSpace(req.Code), Name: strings.TrimSpace(req.Name), Kind: req.Kind, PairedTemplateID: &source.ID, CreatedBy: c.GetUint64("user_id")}
+	if err := validateTemplateIdentity(target.Code, target.Name); err != nil {
+		response.Fail(c, 400, "validation_error", "复制失败："+err.Error(), nil)
+		return
+	}
 	err := s.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&target).Error; err != nil {
 			return err
@@ -356,7 +410,9 @@ func (s *Server) copyFormTemplate(c *gin.Context) {
 		return tx.Create(&model.FormVersion{TemplateID: target.ID, VersionNo: 1, Schema: version.Schema, Status: model.VersionDraft, CreatedBy: target.CreatedBy}).Error
 	})
 	if err != nil {
-		response.Fail(c, 500, "copy_failed", "复制模板失败", err.Error())
+		if !respondTemplateCodeConflict(c, err, target.Code) {
+			response.Fail(c, 500, "copy_failed", "复制模板失败", err.Error())
+		}
 		return
 	}
 	response.Created(c, target)
@@ -497,10 +553,12 @@ func (s *Server) executionShifts(c *gin.Context) {
 	}
 	current, _ := service.CalculateShift(*plan, time.Now())
 	var currentItem *model.ShiftPlanItem
+	var businessDate string
 	if current != nil {
 		currentItem = &current.Item
+		businessDate = current.BusinessDate.Format(time.DateOnly)
 	}
-	response.OK(c, gin.H{"plan": plan, "items": plan.Items, "current": currentItem})
+	response.OK(c, gin.H{"plan": plan, "items": plan.Items, "current": currentItem, "businessDate": businessDate})
 }
 
 // repeatCheck 在提交前判断相同业务上下文是否已有首检记录。

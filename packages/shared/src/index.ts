@@ -1,5 +1,7 @@
 /** 文件说明：PC/PDA 共享数据结构和格式化函数，保证客户端类型定义一致。 */
 
+export { useSubmissionStatus } from './useSubmissionStatus'
+
 export type ClientType = 'pc' | 'pda'
 export interface Department { id:number; code:string; name:string; enabled:boolean; createdAt?:string; updatedAt?:string }
 export interface User { id:number; account:string; name:string; enabled:boolean; role:Role; departmentId?:number; department?:Department }

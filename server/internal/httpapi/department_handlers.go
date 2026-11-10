@@ -59,7 +59,9 @@ func (s *Server) createDepartment(c *gin.Context) {
 	}
 	department := model.Department{Code: req.Code, Name: req.Name, Enabled: enabled}
 	if err := s.db.Create(&department).Error; err != nil {
-		response.Fail(c, http.StatusConflict, "create_failed", "部门编码可能已存在", err.Error())
+		if !respondUniqueConflict(c, err, "ux_departments_code_active", "department_code_conflict", "部门编码「"+department.Code+"」已存在，请更换编码。") {
+			response.Fail(c, http.StatusInternalServerError, "create_failed", "创建部门失败", err.Error())
+		}
 		return
 	}
 	s.audit(c, "department", department.ID, "create", nil, department)

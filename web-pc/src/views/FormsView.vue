@@ -5,10 +5,10 @@
     <div class="page-head">
       <div><p class="section-label">表单工厂</p><h2 class="page-title">任务与表单配置</h2><p class="page-desc">用可视化方式定义首末检、报表和登记表，业务人员不需要接触 JSON。</p></div>
       <div class="page-actions">
-        <el-button type="danger" plain size="large" :disabled="auth.allDepartments || !unusedItems.length" @click="deleteUnused">
+        <DepartmentActionButton type="danger" plain size="large" :disabled="!unusedItems.length" @click="deleteUnused">
           删除未使用<span v-if="unusedItems.length">（{{ unusedItems.length }}）</span>
-        </el-button>
-        <el-button type="primary" size="large" :disabled="auth.allDepartments" @click="openCreate">新建模板</el-button>
+        </DepartmentActionButton>
+        <DepartmentActionButton type="primary" size="large" @click="openCreate">新建模板</DepartmentActionButton>
       </div>
     </div>
 
@@ -23,13 +23,19 @@
       <el-table-column prop="name" label="名称" min-width="200" />
       <el-table-column label="部门" width="150"><template #default="{ row }">{{ row.department?.name || '-' }}</template></el-table-column>
       <el-table-column label="类型" width="140"><template #default="{ row }"><span class="kind-chip" :class="row.kind">{{ kindName(row.kind) }}</span></template></el-table-column>
+      <el-table-column label="创建人" width="130" show-overflow-tooltip>
+        <template #default="{ row }">{{ row.createdByName || (row.createdBy ? `用户 #${row.createdBy}` : '—') }}</template>
+      </el-table-column>
+      <el-table-column label="创建时间" width="170">
+        <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+      </el-table-column>
       <el-table-column label="使用情况" width="190">
         <template #default="{ row }">
           <el-tag :type="row.isUnused ? 'info' : 'success'" size="small">{{ row.isUnused ? '未使用' : '已使用' }}</el-tag>
           <span class="usage-note">产线 {{ row.assignmentCount }} · 填报 {{ row.submissionCount }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="380"><template #default="{ row }"><el-button link @click="view(row)">版本记录</el-button><el-button link :disabled="auth.allDepartments" @click="edit(row)">编辑</el-button><el-button link :disabled="auth.allDepartments" @click="publishLatest(row)">发布起草</el-button><el-button v-if="row.kind==='first_inspection'" link :disabled="auth.allDepartments" @click="copy(row)">复制为末检</el-button><el-button v-if="row.canDelete" link type="danger" :disabled="auth.allDepartments" @click="deleteOne(row)">删除</el-button></template></el-table-column>
+      <el-table-column label="操作" width="380"><template #default="{ row }"><el-button link @click="view(row)">版本记录</el-button><DepartmentActionButton link @click="edit(row)">编辑</DepartmentActionButton><DepartmentActionButton link @click="publishLatest(row)">发布起草</DepartmentActionButton><DepartmentActionButton v-if="row.kind==='first_inspection'" link @click="copy(row)">复制为末检</DepartmentActionButton><DepartmentActionButton v-if="row.canDelete" link type="danger" @click="deleteOne(row)">删除</DepartmentActionButton></template></el-table-column>
     </el-table>
     <AppPagination v-model:page="page" v-model:size="size" :total="total" @change="load" />
 
@@ -43,7 +49,7 @@
               <div class="block-title"><span>01</span><div><strong>模板信息</strong><small>业务人员看到的中文名称和用途</small></div></div>
               <el-form label-position="top">
                 <el-form-item label="模板名称"><el-input v-model="metadata.name" :disabled="!!editingTemplateId" placeholder="例如：磨工小内圈1线首检" /></el-form-item>
-                <el-form-item label="模板编码"><el-input v-model="metadata.code" :disabled="!!editingTemplateId" placeholder="例如：FIRST_LINE_01" /></el-form-item>
+                <el-form-item label="模板编码" :error="codeError"><el-input v-model="metadata.code" :disabled="!!editingTemplateId || saving" placeholder="例如：FIRST_LINE_01" @input="codeError = ''" /></el-form-item>
                 <el-form-item label="模板类型"><el-select v-model="metadata.kind" :disabled="!!editingTemplateId" style="width:100%"><el-option v-for="item in kindOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select></el-form-item><p v-if="editingTemplateId" class="edit-note">已有模板保存为新草稿版本，发布后生效；编码、名称与类型不可修改。</p>
               </el-form>
             </section>
@@ -112,14 +118,13 @@
 </template>
 
 <script setup lang="ts">
+import DepartmentActionButton from '@/components/DepartmentActionButton.vue'
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowDown, ArrowUp, Delete, Plus } from '@element-plus/icons-vue'
 import { api } from '@/api'
-import { useAuthStore } from '@/stores/auth'
 import AppPagination from '@/components/AppPagination.vue'
 
-const auth = useAuthStore()
 const page = ref(1)
 const size = ref(20)
 const total = ref(0)
@@ -142,6 +147,7 @@ const versionSize = ref(20)
 const pagedVersions = computed(() => versions.value.slice((versionPage.value - 1) * versionSize.value, versionPage.value * versionSize.value))
 const builderOpen = ref(false)
 const saving = ref(false)
+const codeError = ref('')
 const activeIndex = ref(0)
 const fields = ref<EditorField[]>([])
 const metadata = reactive({ code: '', name: '', kind: 'first_inspection' })
@@ -153,6 +159,7 @@ async function edit(row: any) {
   if (!versions.length) { ElMessage.warning('该模板还没有任何版本'); return }
   const latest = versions[0]
   const schema = typeof latest.schema === 'string' ? JSON.parse(latest.schema) : latest.schema
+  codeError.value = ''
   metadata.code = row.code
   metadata.name = row.name
   metadata.kind = row.kind
@@ -176,7 +183,7 @@ function addOption(field: EditorField) { field.options.push({ label: '', value: 
 function syncOptionValue(option: Option) { if (!option.value) option.value = `option_${Date.now().toString(36)}` }
 function onTypeChange(field: EditorField) { if (isSelect(field.type) && !field.options.length) { addOption(field); addOption(field) } if (!canRepeatValue(field.type)) field.allowMultiple = false; if (field.type === 'static_text') { field.required = false; field.allowMultiple = false } if (field.type === 'product') { field.allowMultiple = false; field.repeatable = false; field.unit = ''; field.defaultValue = '' } }
 function appendToken(field: EditorField, token: string) { field.defaultValue = `${field.defaultValue || ''}${token}` }
-function openCreate() { editingTemplateId.value = null; metadata.code = ''; metadata.name = ''; metadata.kind = kind.value; fields.value = [emptyField(0)]; fields.value[0].label = '检测值'; fields.value[0].type = kind.value === 'report' ? 'text' : 'number'; fields.value[0].unit = kind.value === 'report' ? '' : 'mm'; fields.value[0].allowMultiple = kind.value === 'first_inspection' || kind.value === 'final_inspection'; activeIndex.value = 0; builderOpen.value = true }
+function openCreate() { editingTemplateId.value = null; codeError.value = ''; metadata.code = ''; metadata.name = ''; metadata.kind = kind.value; fields.value = [emptyField(0)]; fields.value[0].label = '检测值'; fields.value[0].type = kind.value === 'report' ? 'text' : 'number'; fields.value[0].unit = kind.value === 'report' ? '' : 'mm'; fields.value[0].allowMultiple = kind.value === 'first_inspection' || kind.value === 'final_inspection'; activeIndex.value = 0; builderOpen.value = true }
 function changeKind() { page.value = 1; load() }
 async function load() {
   const { data } = await api.get('/admin/form-templates', { params: { kind: kind.value, page: page.value, size: size.value } })
@@ -204,12 +211,40 @@ async function save() {
     }
     builderOpen.value = false
     load()
-  } catch (error: any) { ElMessage.error(error.message) } finally { saving.value = false }
+  } catch (error: any) {
+    if (error.code === 'template_code_conflict') codeError.value = '当前部门已使用此编码，请更换。'
+    ElMessage.error(error.message || '保存模板失败')
+  } finally {
+    saving.value = false
+  }
 }
 // 发布最新草稿；已分配该模板的产线会在后端事务中切换活动版本。
-async function publishLatest(row: any) { const { data } = await api.get(`/admin/form-templates/${row.id}`); const draft = data.versions.find((version: any) => version.status === 'draft'); if (!draft) { ElMessage.warning('没有待发布的草稿'); return }; await ElMessageBox.confirm('发布后该版本可在「产线分配」中分配到产线；已经分配过该模板的产线会自动更新到新版本，其他产线不受影响。是否继续？', '发布确认'); await api.post(`/admin/form-versions/${draft.id}/publish`, { lineIds: [] }); ElMessage.success('发布完成'); load() }
+async function publishLatest(row: any) {
+  try {
+    const { data } = await api.get(`/admin/form-templates/${row.id}`)
+    const draft = data.versions.find((version: any) => version.status === 'draft')
+    if (!draft) { ElMessage.warning('没有待发布的草稿'); return }
+    await ElMessageBox.confirm('发布后该版本可在「产线分配」中分配到产线；已经分配过该模板的产线会自动更新到新版本，其他产线不受影响。是否继续？', '发布确认')
+    await api.post(`/admin/form-versions/${draft.id}/publish`, { lineIds: [] })
+    ElMessage.success('发布完成')
+  } catch (error: any) {
+    if (error !== 'cancel' && error !== 'close') ElMessage.error(error.message || '发布模板失败')
+    return
+  }
+  await load()
+}
 // 首检模板复制为末检模板时保留字段结构并生成新草稿。
-async function copy(row: any) { await api.post(`/admin/form-templates/${row.id}/copy`, { code: `${row.code}_FINAL`, name: `${row.name}（末检）`, kind: 'final_inspection' }); ElMessage.success('已复制为末检草稿'); kind.value = 'final_inspection'; load() }
+async function copy(row: any) {
+  try {
+    await api.post(`/admin/form-templates/${row.id}/copy`, { code: `${row.code}_FINAL`, name: `${row.name}（末检）`, kind: 'final_inspection' })
+  } catch (error: any) {
+    ElMessage.error(error.message || '复制模板失败')
+    return
+  }
+  ElMessage.success('已复制为末检草稿')
+  kind.value = 'final_inspection'
+  await load()
+}
 async function deleteOne(row: any) {
   try {
     const message = row.isUnused

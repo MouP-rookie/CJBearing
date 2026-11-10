@@ -4,7 +4,7 @@
   <div class="page products-page">
     <div class="page-head">
       <div><p class="section-label">产品档案</p><h2 class="page-title">产品维护</h2><p class="page-desc">维护正在生产的产品清单并关联可生产的产线，点检作业时按当前产线过滤选择。</p></div>
-      <el-button type="primary" size="large" :disabled="auth.allDepartments" @click="openCreate()">新增产品</el-button>
+      <DepartmentActionButton type="primary" size="large" @click="openCreate()">新增产品</DepartmentActionButton>
     </div>
     <el-table :data="items" border row-key="id">
       <el-table-column prop="code" label="产品编码" width="180" />
@@ -19,9 +19,9 @@
       <el-table-column label="状态" width="100"><template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '启用' : '停用' }}</el-tag></template></el-table-column>
       <el-table-column label="操作" width="220">
         <template #default="{ row }">
-          <el-button link :disabled="auth.allDepartments" @click="openEdit(row)">编辑</el-button>
-          <el-button link :disabled="auth.allDepartments" @click="toggle(row)">{{ row.enabled ? '停用' : '启用' }}</el-button>
-          <el-button link type="danger" :disabled="auth.allDepartments" @click="remove(row)">删除</el-button>
+          <DepartmentActionButton link @click="openEdit(row)">编辑</DepartmentActionButton>
+          <DepartmentActionButton link @click="toggle(row)">{{ row.enabled ? '停用' : '启用' }}</DepartmentActionButton>
+          <DepartmentActionButton link type="danger" @click="remove(row)">删除</DepartmentActionButton>
         </template>
       </el-table-column>
     </el-table>
@@ -42,13 +42,12 @@
 </template>
 
 <script setup lang="ts">
+import DepartmentActionButton from '@/components/DepartmentActionButton.vue'
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '@/api'
-import { useAuthStore } from '@/stores/auth'
 import AppPagination from '@/components/AppPagination.vue'
 
-const auth = useAuthStore()
 const items = ref<any[]>([])
 const page = ref(1)
 const size = ref(20)

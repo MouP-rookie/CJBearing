@@ -2,7 +2,7 @@
 
 <template>
   <div class="page shift-page">
-    <div class="page-head"><div><p class="section-label">班次版本</p><h2 class="page-title">班次配置</h2><p class="page-desc">修改班次会生成新的生效版本，历史填报仍保留原班次名称和时间。</p></div><el-button type="primary" size="large" :disabled="auth.allDepartments" @click="openCreate">新增班次计划</el-button></div>
+    <div class="page-head"><div><p class="section-label">班次版本</p><h2 class="page-title">班次配置</h2><p class="page-desc">修改班次会生成新的生效版本，历史填报仍保留原班次名称和时间。</p></div><DepartmentActionButton type="primary" size="large" @click="openCreate">新增班次计划</DepartmentActionButton></div>
 
     <el-table :data="plans" border row-key="id">
       <el-table-column prop="name" label="计划名称" min-width="170" />
@@ -10,7 +10,7 @@
       <el-table-column label="生效时间" width="220"><template #default="{ row }"><span class="mono">{{ formatDateTime(row.effectiveAt) }}</span></template></el-table-column>
       <el-table-column label="班次安排" min-width="350"><template #default="{ row }"><div class="shift-tags"><el-tag v-for="item in row.items" :key="item.id" effect="plain" type="info">{{ item.name }} {{ item.startTime }} - {{ item.endTime }}</el-tag></div></template></el-table-column>
       <el-table-column label="状态" width="100"><template #default="{ $index }"><el-tag v-if="$index === 0" type="success">当前生效</el-tag><span v-else class="muted">历史版本</span></template></el-table-column>
-      <el-table-column label="操作" width="180"><template #default="{ row }"><el-button link :disabled="auth.allDepartments" @click="openEdit(row)">编辑</el-button><el-button link type="danger" :disabled="auth.allDepartments" @click="remove(row)">删除</el-button></template></el-table-column>
+      <el-table-column label="操作" width="180"><template #default="{ row }"><DepartmentActionButton link @click="openEdit(row)">编辑</DepartmentActionButton><DepartmentActionButton link type="danger" @click="remove(row)">删除</DepartmentActionButton></template></el-table-column>
     </el-table>
     <AppPagination v-model:page="page" v-model:size="size" :total="total" @change="load" />
 
@@ -36,14 +36,13 @@
 </template>
 
 <script setup lang="ts">
+import DepartmentActionButton from '@/components/DepartmentActionButton.vue'
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, Plus } from '@element-plus/icons-vue'
 import { api } from '@/api'
-import { useAuthStore } from '@/stores/auth'
 import AppPagination from '@/components/AppPagination.vue'
 
-const auth = useAuthStore()
 type ShiftItemForm = { name: string; start: string; end: string; crossMidnight: boolean }
 const plans = ref<any[]>([])
 const page = ref(1)

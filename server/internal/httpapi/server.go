@@ -136,6 +136,7 @@ func (s *Server) Router() *gin.Engine {
 	exec.GET("/repeat-check", s.repeatCheck)
 	exec.GET("/products", middleware.RequirePermission(s.authorizer, rbac.PermExecutionView), s.executionProducts)
 	exec.GET("/forms", middleware.RequirePermission(s.authorizer, rbac.PermExecutionView), s.executionForms)
+	exec.GET("/form-status", middleware.RequirePermission(s.authorizer, rbac.PermExecutionView), s.executionFormStatus)
 	exec.GET("/forms/:id", middleware.RequirePermission(s.authorizer, rbac.PermExecutionView), s.executionFormDetail)
 	exec.GET("/my-submissions", middleware.RequirePermission(s.authorizer, rbac.PermExecutionView), s.listMySubmissions)
 	exec.GET("/my-submissions/:id", middleware.RequirePermission(s.authorizer, rbac.PermExecutionView), s.mySubmissionDetail)

@@ -79,7 +79,9 @@ func (s *Server) createProduct(c *gin.Context) {
 	}
 	product := model.Product{DepartmentID: departmentID, Code: req.Code, Name: req.Name, Enabled: enabled}
 	if err := s.db.Create(&product).Error; err != nil {
-		response.Fail(c, 409, "create_failed", "产品编码可能已存在", err.Error())
+		if !respondUniqueConflict(c, err, "ux_products_department_code_active", "product_code_conflict", "当前部门已使用产品编码「"+product.Code+"」，请更换编码。") {
+			response.Fail(c, 500, "create_failed", "创建产品失败", err.Error())
+		}
 		return
 	}
 	if err := s.replaceProductLines(&product, req.LineIDs); err != nil {
@@ -122,7 +124,9 @@ func (s *Server) updateProduct(c *gin.Context) {
 		product.Enabled = *req.Enabled
 	}
 	if err := s.db.Save(&product).Error; err != nil {
-		response.Fail(c, 500, "save_failed", "保存产品失败", err.Error())
+		if !respondUniqueConflict(c, err, "ux_products_department_code_active", "product_code_conflict", "当前部门已使用产品编码「"+product.Code+"」，请更换编码。") {
+			response.Fail(c, 500, "save_failed", "保存产品失败", err.Error())
+		}
 		return
 	}
 	if req.LineIDs != nil {

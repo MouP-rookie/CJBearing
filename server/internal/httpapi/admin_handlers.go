@@ -118,7 +118,9 @@ func (s *Server) createUser(c *gin.Context) {
 	}
 	user := model.User{Account: req.Account, Name: req.Name, PasswordHash: hash, RoleID: req.RoleID, DepartmentID: departmentID, Enabled: enabled}
 	if err := service.CreateInspectionUser(s.db, &user, c.GetUint64("user_id")); err != nil {
-		response.Fail(c, 409, "create_failed", "账号可能已存在", err.Error())
+		if !respondUniqueConflict(c, err, "ux_users_account_active", "account_conflict", "账号「"+user.Account+"」已存在，请使用其他工号或账号。") {
+			response.Fail(c, 500, "create_failed", "创建用户失败", err.Error())
+		}
 		return
 	}
 	s.audit(c, "user", user.ID, "create", nil, user)
@@ -367,7 +369,9 @@ func (s *Server) createRole(c *gin.Context) {
 		return replaceRoleGrants(tx, role.ID, req.PermissionCodes, req.LineIDs)
 	})
 	if err != nil {
-		response.Fail(c, 409, "create_failed", "创建角色失败", err.Error())
+		if !respondUniqueConflict(c, err, "ux_roles_code_active", "role_code_conflict", "角色编码「"+role.Code+"」已存在，请更换编码。") {
+			response.Fail(c, 500, "create_failed", "创建角色失败", err.Error())
+		}
 		return
 	}
 	s.audit(c, "role", role.ID, "create", nil, role)
@@ -542,7 +546,9 @@ func (s *Server) createLine(c *gin.Context) {
 	}
 	line := model.Line{DepartmentID: departmentID, Code: strings.TrimSpace(req.Code), Name: strings.TrimSpace(req.Name), ParentID: req.ParentID, Level: level, Enabled: enabled}
 	if err := s.db.Create(&line).Error; err != nil {
-		response.Fail(c, 409, "create_failed", "产线编码可能已存在", err.Error())
+		if !respondUniqueConflict(c, err, "ux_lines_department_code_active", "line_code_conflict", "当前部门已使用产线编码「"+line.Code+"」，请更换编码。") {
+			response.Fail(c, 500, "create_failed", "创建产线失败", err.Error())
+		}
 		return
 	}
 	s.audit(c, "line", line.ID, "create", nil, line)
@@ -581,7 +587,9 @@ func (s *Server) updateLine(c *gin.Context) {
 		line.Enabled = *req.Enabled
 	}
 	if err := s.db.Save(&line).Error; err != nil {
-		response.Fail(c, 500, "save_failed", "保存产线失败", err.Error())
+		if !respondUniqueConflict(c, err, "ux_lines_department_code_active", "line_code_conflict", "当前部门已使用产线编码「"+line.Code+"」，请更换编码。") {
+			response.Fail(c, 500, "save_failed", "保存产线失败", err.Error())
+		}
 		return
 	}
 	s.audit(c, "line", line.ID, "update", before, line)

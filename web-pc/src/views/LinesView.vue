@@ -10,7 +10,7 @@
       </div>
     </div>
     <el-alert v-if="auth.allDepartments" class="scope-note" type="info" :closable="false" show-icon title="可直接维护各部门的产线。新增或批量导入时，请在弹窗中选择所属部门。" />
-    <el-table :data="lineTree" border row-key="id" default-expand-all :tree-props="{ children: 'children' }">
+    <el-table :data="lineTree" border row-key="id" :tree-props="{ children: 'children' }">
       <el-table-column prop="code" label="产线编码" width="180" />
       <el-table-column prop="name" label="产线名称" min-width="220" />
       <el-table-column label="部门" width="150"><template #default="{ row }">{{ row.department?.name || '-' }}</template></el-table-column>
