@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>长江轴承东港分厂 QMS 系统</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app" v-cloak>
+  <header class="topbar">
+    <div class="brand">
+      <h1>长江轴承东港分厂 QMS 系统</h1>
+      <nav class="nav">
+        <button class="nav-item" :class="{ active: view === 'env' }" @click="switchView('env')">环境监测</button>
+        <button class="nav-item" :class="{ active: view === 'device' }" @click="switchView('device')">设备历史数据</button>
+      </nav>
+    </div>
+    <div class="toolbar" v-if="view === 'env'">
+      <span class="stamp" v-if="generatedAt">最后更新 {{ generatedAt }}</span>
+      <label class="limit">
+        实时条数
+        <select v-model.number="limit" :disabled="dataMode !== ''" @change="refresh(false)">
+          <option :value="1">1</option>
+          <option :value="10">10</option>
+          <option :value="20">20</option>
+          <option :value="50">50</option>
+          <option :value="100">100</option>
+          <option :value="500">500</option>
+        </select>
+      </label>
+      <button class="btn" :disabled="loading" @click="refresh(true)">{{ loading ? '刷新中…' : '立即刷新' }}</button>
+      <span class="countdown">{{ countdown }}s 后自动刷新</span>
+    </div>
+    <div class="toolbar" v-else>
+      <span class="stamp" v-if="history">共 {{ history.rows.length }} 条记录</span>
+      <button class="btn" :disabled="devicesLoading" @click="loadDevices(true)">
+        {{ devicesLoading ? '刷新中…' : '刷新设备目录' }}
+      </button>
+    </div>
+  </header>
+
+  <div class="alert" v-if="error">{{ error }}</div>
+  <div class="toast" v-if="exportNotice">{{ exportNotice }}</div>
+
+  <!-- ===================== 环境监测 ===================== -->
+  <main class="grid" v-if="view === 'env'">
+    <section class="card span2">
+      <div class="card-head">
+        <h2>淬火线油烟治理系统 · 开关机记录</h2>
+        <span class="meta">共 {{ powerRows.length }} 条</span>
+      </div>
+      <div class="filters">
+        <label class="range">
+          历史范围
+          <select v-model="rangeMode" @change="onRangeChange">
+            <option value="7">近 7 天</option>
+            <option value="30">近 30 天</option>
+            <option value="all">全部历史（按条数限制）</option>
+            <option value="90">近 90 天</option>
+            <option value="180">近 180 天</option>
+            <option value="0">全部历史</option>
+            <option value="custom">自定义时间段</option>
+          </select>
+        </label>
+        <template v-if="rangeMode === 'custom'">
+          <label class="range">从 <input type="datetime-local" step="60" v-model="start"></label>
+          <label class="range">到 <input type="datetime-local" step="60" v-model="end"></label>
+          <button class="btn small" :disabled="loading" @click="queryPower">查询</button>
+          <button class="btn small ghost" :disabled="loading" @click="resetRange">重置</button>
+        </template>
+        <span class="span-text">数据范围：{{ powerSpan }}</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th class="col-seq">序号</th>
+              <th>开机时间</th>
+              <th>关机时间</th>
+              <th>运行时间</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="row in powerRows" :key="row.startTs">
+              <td>{{ row.seq }}</td>
+              <td>{{ row.startTime }}</td>
+              <td>
+                <span v-if="row.running" class="tag running">运行中</span>
+                <span v-else>{{ row.endTime }}</span>
+              </td>
+              <td :class="{ live: row.running }">{{ durationOf(row) }}</td>
+            </tr>
+            <tr v-if="!powerRows.length"><td colspan="4" class="empty">暂无数据</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>淬火线油烟治理系统 · 实时检测数据</h2>
+        <span class="meta">共 {{ pressureRows.length }} 条</span>
+      </div>
+      <div class="filters">
+        <label class="range">
+          时间范围
+          <select v-model="dataMode" @change="onDataRangeChange">
+            <option value="">最近数据</option>
+            <option value="1">近 1 天</option>
+            <option value="3">近 3 天</option>
+            <option value="7">近 7 天</option>
+            <option value="30">近 30 天</option>
+            <option value="custom">自定义时间段</option>
+          </select>
+        </label>
+        <template v-if="dataMode === 'custom'">
+          <label class="range">从 <input type="datetime-local" step="60" v-model="dataStart"></label>
+          <label class="range">到 <input type="datetime-local" step="60" v-model="dataEnd"></label>
+          <button class="btn small" :disabled="loading" @click="queryData">查询</button>
+          <button class="btn small ghost" :disabled="loading" @click="resetDataRange">重置</button>
+        </template>
+        <span class="span-text">数据范围：{{ pressureSpan }}</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th class="col-seq">序号</th>
+              <th>设备名称</th>
+              <th>压差1</th>
+              <th>压差2</th>
+              <th>采集时间</th>
+              <th>设备状态</th>
+              <th class="col-op">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="row in pressureRows" :key="row.seq">
+              <td>{{ row.seq }}</td>
+              <td>{{ row.deviceName }}</td>
+              <td class="num">{{ display(row.diff1) }}</td>
+              <td class="num">{{ display(row.diff2) }}</td>
+              <td>{{ row.collectTime }}</td>
+              <td><span class="tag" :class="row.statusText === '运行中' ? 'running' : 'stopped'">{{ row.statusText }}</span></td>
+              <td><button class="link" @click="openPressureDetail(row)">详情</button></td>
+            </tr>
+            <tr v-if="!pressureRows.length"><td colspan="7" class="empty">暂无数据</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>废气处理温湿度传感器 · 实时数据</h2>
+        <span class="meta">共 {{ thRows.length }} 条</span>
+      </div>
+      <div class="filters">
+        <label class="range">
+          时间范围
+          <select v-model="dataMode" @change="onDataRangeChange">
+            <option value="">最近数据</option>
+            <option value="1">近 1 天</option>
+            <option value="3">近 3 天</option>
+            <option value="7">近 7 天</option>
+            <option value="30">近 30 天</option>
+            <option value="custom">自定义时间段</option>
+          </select>
+        </label>
+        <template v-if="dataMode === 'custom'">
+          <label class="range">从 <input type="datetime-local" step="60" v-model="dataStart"></label>
+          <label class="range">到 <input type="datetime-local" step="60" v-model="dataEnd"></label>
+          <button class="btn small" :disabled="loading" @click="queryData">查询</button>
+          <button class="btn small ghost" :disabled="loading" @click="resetDataRange">重置</button>
+        </template>
+        <span class="span-text">数据范围：{{ thSpan }}</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th class="col-seq">序号</th>
+              <th>设备名称</th>
+              <th>温度</th>
+              <th>湿度</th>
+              <th>采集时间</th>
+              <th class="col-op">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="row in thRows" :key="row.seq">
+              <td>{{ row.seq }}</td>
+              <td>{{ row.deviceName }}</td>
+              <td class="num">{{ display(row.temperature) }}</td>
+              <td class="num">{{ display(row.humidity) }}</td>
+              <td>{{ row.collectTime }}</td>
+              <td><button class="link" @click="openThDetail(row)">详情</button></td>
+            </tr>
+            <tr v-if="!thRows.length"><td colspan="6" class="empty">暂无数据</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <!-- ===================== 设备历史数据 ===================== -->
+  <main class="grid" v-else>
+    <section class="card span2">
+      <div class="card-head">
+        <h2>设备历史数据查询</h2>
+        <span class="meta">平台可见 {{ devices.length }} 台设备</span>
+      </div>
+      <div class="filters">
+        <label class="range">设备类型
+          <select v-model="typeFilter">
+            <option value="">全部</option>
+            <option v-for="t in deviceTypes" :key="t" :value="t">{{ t }}</option>
+          </select>
+        </label>
+        <div class="range combo-wrap">
+          <span>设备</span>
+          <div class="combo">
+            <input class="combo-input" type="text" v-model="deviceQuery" autocomplete="off"
+                   placeholder="输入设备编码或名称，模糊搜索"
+                   @focus="openDeviceList" @input="onDeviceInput"
+                   @keydown.down.prevent="moveDeviceHighlight(1)"
+                   @keydown.up.prevent="moveDeviceHighlight(-1)"
+                   @keydown.enter.prevent="onDeviceEnter"
+                   @keydown.esc.prevent="closeDeviceList">
+            <button class="combo-clear" type="button" v-if="deviceQuery" title="清空" @click="clearDevice">×</button>
+          </div>
+        </div>
+        <label class="range">时间范围
+          <select v-model="historyRange">
+            <option value="1">近 1 天</option>
+            <option value="3">近 3 天</option>
+            <option value="7">近 7 天</option>
+            <option value="30">近 30 天</option>
+            <option value="custom">自定义时间段</option>
+          </select>
+        </label>
+        <template v-if="historyRange === 'custom'">
+          <label class="range">从 <input type="datetime-local" step="60" v-model="historyStart"></label>
+          <label class="range">到 <input type="datetime-local" step="60" v-model="historyEnd"></label>
+        </template>
+        <button class="btn small" :disabled="loading || !selectedId" @click="queryHistory">
+          {{ loading ? '查询中…' : '查询' }}
+        </button>
+        <button class="btn small ghost" v-if="loading" @click="cancelHistory">取消查询</button>
+        <span class="meta" role="status" aria-live="polite">{{ historyProgress }}</span>
+      </div>
+      <div class="combo-list" v-if="deviceOpen">
+        <div class="combo-tip" v-if="!deviceMatches.length">没有匹配的设备</div>
+        <template v-else>
+          <div class="combo-tip">匹配 {{ deviceMatches.length }} 台，用 ↓↑ 选择、回车确认</div>
+          <div class="combo-item" v-for="(d, idx) in deviceMatches" :key="d.id"
+               :class="{ active: idx === deviceHighlight }"
+               @mouseenter="deviceHighlight = idx" @mousedown.prevent="pickDevice(d)">
+            <span class="combo-name">{{ d.name }}</span>
+            <span class="combo-label" v-if="d.label">{{ d.label }}</span>
+          </div>
+        </template>
+      </div>
+    </section>
+
+    <section class="card span2" v-if="history">
+      <div class="card-head">
+        <h2>
+          {{ history.deviceName || history.deviceId }}
+          <span class="sub" v-if="history.deviceLabel">{{ history.deviceLabel }}</span>
+          <span class="badge" :class="history.judgeable ? 'quality' : 'device'">{{ history.dataType }}</span>
+        </h2>
+        <span class="meta">
+          {{ history.startTime }} ~ {{ history.endTime }}
+          · 显示 {{ visibleRows.length }} 条
+          · <span id="history-abnormal-count" role="status" aria-live="polite" :class="{ warn: selectedOutCount > 0 }"
+                    title="仅统计当前勾选栏目，同一采集时间多个不合格只计一条；统计整个查询范围">已选栏目异常 {{ selectedOutCount }} 条</span>
+        </span>
+        <button class="btn small ghost" @click="exportCsv">
+          导出 CSV（{{ visibleRows.length }} 条）
+        </button>
+        <button class="btn small ghost" :disabled="rawModal.loading" @click="openRaw">
+          {{ rawModal.loading ? '读取中…' : '查看原始报文' }}
+        </button>
+      </div>
+      <div class="history-notice" v-if="historyNotice" role="status">
+        <span>{{ historyNotice }}</span>
+        <button class="btn small ghost" v-if="latestReportedAt" @click="queryLatestHistory">查询最近上报记录</button>
+      </div>
+      <div class="tabs">
+        <button class="tab" :class="{ active: dataView === 'quality' }" @click="switchDataView('quality')">
+          质量数据 <span class="tab-count">{{ qualityGroups.length }}</span>
+        </button>
+        <button class="tab" :class="{ active: dataView === 'device' }" @click="switchDataView('device')">
+          设备数据 <span class="tab-count">{{ deviceGroups.length }}</span>
+        </button>
+        <span class="tab-hint">
+          {{ dataView === 'quality'
+            ? '检测项（测量值 / 上限 / 下限），超限标红'
+            : '运转类字段（状态 / 节拍 / 计数），不做判定' }}
+        </span>
+      </div>
+
+      <div class="filters" v-if="currentGroups.length">
+        <span class="filter-label">
+          {{ dataView === 'quality' ? '检测项' : '字段' }}
+          {{ activeGroups.length }}/{{ chipGroups.length }}
+        </span>
+        <button class="chip" v-for="g in chipGroups" :key="g.valueKey"
+                :class="{ on: isGroupOn(g.valueKey) }" @click="toggleGroup(g.valueKey)">
+          {{ g.name }}<span v-if="g.judgeable" class="dot"
+                :title="g.limitApplicable ? '含有效上下限' : 'OK/NG 判定'">*</span>
+        </button>
+        <span class="spacer"></span>
+        <template v-if="dataView === 'quality'">
+          <label class="range" title="把 二维码 / 时间-年 月 这类没有有效限值的项也列出来">
+            <input type="checkbox" v-model="showAllItems"> 显示全部项
+          </label>
+          <label class="range"><input type="checkbox" v-model="onlyOut"> 只看异常</label>
+          <button class="btn small ghost" @click="selectAllGroups">全选</button>
+          <button class="btn small ghost" @click="selectLimitGroups">只看带上下限</button>
+        </template>
+        <template v-else>
+          <label class="range" title="设备数据分批上报，同一个时刻只有部分字段有值">
+            <input type="checkbox" v-model="fillDown"> 空值沿用上一次
+          </label>
+          <button class="btn small ghost" @click="selectAllGroups">全选</button>
+          <button class="btn small ghost" @click="selectNoGroups">清空</button>
+        </template>
+      </div>
+      <div class="filters" v-else>
+        <span class="filter-label">{{ emptyHint }}</span>
+      </div>
+      <div class="legend" v-if="dataView === 'quality' && hasLimitSelected">
+        <span class="legend-bad"></span> 红色 = 超出上下限，或 OK/NG 判定为 NG
+        <span class="legend-note">限值按设备上报的数值判定，上限/下限命名相反的按较小区间边界处理</span>
+      </div>
+      <div class="table-wrap tall">
+        <table class="history">
+          <thead>
+            <tr>
+              <th class="sticky-col">采集时间</th>
+              <th v-for="g in activeGroups" :key="g.valueKey">
+                {{ g.name }}<span class="th-sub" v-if="g.limitApplicable">（含上下限）</span>
+                <span class="th-sub" v-else-if="g.booleanCheck">（0=NG，1=OK）</span>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="row in pagedRows" :key="row.ts">
+              <td class="sticky-col time">{{ row.time }}</td>
+              <td v-for="g in activeGroups" :key="g.valueKey" class="metric"
+                  :class="{ bad: row.flags[g.valueKey] === 'OUT' }"
+                  :title="fullText(row.values[g.valueKey])">
+                <span class="val">{{ cell(row.values[g.valueKey]) }}</span>
+                <span class="lim" v-if="limitText(row, g)">{{ limitText(row, g) }}</span>
+              </td>
+            </tr>
+            <tr v-if="!visibleRows.length">
+              <td :colspan="columnCount" class="empty">暂无数据</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="pager">
+        <label class="range">每页
+          <select v-model.number="pageSize">
+            <option :value="50">50</option>
+            <option :value="100">100</option>
+            <option :value="200">200</option>
+          </select> 行
+        </label>
+        <button class="btn small ghost" :disabled="pageIndex <= 0" @click="prevPage">上一页</button>
+        <span class="pager-info">
+          第 {{ safePageIndex + 1 }} / {{ pageCount }} 页 · 共 {{ visibleRows.length }} 行
+        </span>
+        <button class="btn small ghost" :disabled="safePageIndex >= pageCount - 1" @click="nextPage">下一页</button>
+        <label class="range">跳至
+          <input class="page-input" type="number" min="1" :max="pageCount"
+                 v-model.number="jumpPageNo" @keydown.enter="gotoPage">
+          页
+        </label>
+        <button class="btn small ghost" @click="gotoPage">跳转</button>
+        <span class="spacer"></span>
+        <span class="pager-info">{{ dataView === 'quality' ? '质量数据' : '设备数据' }} · 共 {{ history.keys.length }} 个上报字段</span>
+      </div>
+    </section>
+
+    <section class="card span2"
+             v-if="history && dataView === 'quality' && history.spcRows && history.spcRows.length">
+      <div class="card-head">
+        <h2>spcvalue 明细 <span class="sub">按 Name / Ucl / Lcl / Value 原样拆解</span></h2>
+        <span class="meta">
+          共 {{ history.spcRows.length }} 条
+          · <span :class="{ warn: spcOutCount > 0 }" title="仅统计当前勾选栏目的SPC明细，同一采集时间只计一条">已选栏目异常 {{ spcOutCount }} 条</span>
+          <template v-if="history.spcTruncated">· 已截断</template>
+        </span>
+        <button class="btn small ghost" @click="exportSpcCsv">
+          导出 CSV（{{ history.spcRows.length }} 条）
+        </button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th class="sticky-col">采集时间</th>
+              <th>Name（检测项）</th>
+              <th>Value（实测值）</th>
+              <th>Ucl（上限）</th>
+              <th>Lcl（下限）</th>
+              <th>判定</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(r, i) in pagedSpcRows" :key="r.ts + '|' + r.name + '|' + i">
+              <td class="sticky-col time">{{ r.time }}</td>
+              <td>{{ r.name }}</td>
+              <td class="num" :class="{ bad: r.out }">{{ cell(r.value) }}</td>
+              <td class="num">{{ cell(r.ucl) }}</td>
+              <td class="num">{{ cell(r.lcl) }}</td>
+              <td>
+                <span v-if="r.out" class="tag out">超限</span>
+                <span v-else-if="!r.applicable" class="tag muted">无有效限值</span>
+                <span v-else class="tag running">正常</span>
+              </td>
+            </tr>
+            <tr v-if="!pagedSpcRows.length"><td colspan="6" class="empty">暂无数据</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="pager">
+        <button class="btn small ghost" :disabled="safeSpcPage <= 0"
+                @click="spcPage = safeSpcPage - 1">上一页</button>
+        <span class="pager-info">第 {{ safeSpcPage + 1 }} / {{ spcPageCount }} 页 · 每页 {{ pageSize }} 条</span>
+        <button class="btn small ghost" :disabled="safeSpcPage >= spcPageCount - 1"
+                @click="spcPage = safeSpcPage + 1">下一页</button>
+        <label class="range">跳至
+          <input class="page-input" type="number" min="1" :max="spcPageCount"
+                 v-model.number="spcJumpPageNo" @keydown.enter="gotoSpcPage">
+          页
+        </label>
+        <button class="btn small ghost" @click="gotoSpcPage">跳转</button>
+        <span class="spacer"></span>
+        <span class="pager-info">红色 = 实测值超出 Ucl / Lcl 区间</span>
+      </div>
+    </section>
+  </main>
+
+  <div class="modal-mask" v-if="detail.visible" @click.self="closeDetail">
+    <div class="modal">
+      <div class="modal-head">
+        <h3>{{ detail.title }}</h3>
+        <button class="btn ghost" @click="closeDetail">关闭</button>
+      </div>
+      <div class="modal-body">
+        <table class="raw">
+          <thead><tr><th>字段</th><th>原始值</th><th>数据时间</th></tr></thead>
+          <tbody>
+            <tr v-for="item in detail.rows" :key="item.key">
+              <td>{{ item.key }}</td>
+              <td class="num">{{ item.value === '' || item.value === null ? '(空)' : item.value }}</td>
+              <td>{{ item.time }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-mask" v-if="rawModal.visible" @click.self="closeRaw">
+    <div class="modal wide">
+      <div class="modal-head">
+        <h3>{{ rawModal.title }}<span class="sub">{{ rawModal.meta }}</span></h3>
+        <div class="modal-actions">
+          <button class="btn small ghost" @click="copyRaw">{{ rawModal.copied ? '已复制' : '复制完整报文' }}</button>
+          <button class="btn small ghost" @click="downloadRaw">下载 JSON</button>
+          <button class="btn small ghost" v-if="rawModal.fullText.length > rawModal.previewSize && !rawModal.showFull"
+                  @click="rawModal.showFull = true">加载完整内容</button>
+          <button class="btn small ghost" v-if="rawModal.showFull && rawModal.fullText.length > rawModal.previewSize"
+                  @click="rawModal.showFull = false">只看前段</button>
+          <button class="btn ghost" @click="closeRaw">关闭</button>
+        </div>
+      </div>
+      <div class="modal-body">
+        <div class="notice" v-if="rawModal.loading">读取中…</div>
+        <template v-else>
+          <div class="notice" v-if="!rawModal.showFull && rawModal.fullText.length > rawModal.previewSize">
+            报文较大（{{ rawModal.sizeText }}），当前只显示前 {{ Math.round(rawModal.previewSize / 1024) }} KB。
+            想看全部可点「加载完整内容」，或直接点「复制完整报文」。
+          </div>
+          <pre class="raw-json">{{ rawModal.showFull ? rawModal.fullText : rawModal.preview }}</pre>
+        </template>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="vendor/vue.global.prod.js"></script>
+<script src="app.js?v=c3eaafea6311"></script>
+</body>
+</html>

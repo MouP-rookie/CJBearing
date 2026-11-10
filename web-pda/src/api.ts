@@ -3,4 +3,4 @@
 import axios from 'axios'
 export const api=axios.create({baseURL:'/api/v1',timeout:30000,withCredentials:true})
 // 页面层只处理 Error.message，避免重复解析 Axios 响应结构。
-api.interceptors.response.use(r=>r,e=>Promise.reject(new Error(e.response?.data?.message||e.message||'请求失败')))
+api.interceptors.response.use(r=>r,e=>Promise.reject(Object.assign(new Error(e.response?.data?.message||e.message||'请求失败'),{status:e.response?.status,code:e.response?.data?.code})))

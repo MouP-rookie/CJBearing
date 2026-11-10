@@ -9,11 +9,11 @@
         <p class="page-desc">维护账号、角色和登录权限。批量导入使用 Excel 模板，导入用户默认密码为 123456。</p>
       </div>
       <div class="page-actions">
-        <el-button :disabled="auth.allDepartments" @click="openImport">
+        <el-button @click="openImport">
           <el-icon><UploadFilled /></el-icon>
           批量导入
         </el-button>
-        <el-button type="primary" :disabled="auth.allDepartments" @click="openCreate">新增用户</el-button>
+        <el-button type="primary" @click="openCreate">新增用户</el-button>
       </div>
     </div>
 
@@ -96,6 +96,13 @@
     </el-dialog>
 
     <el-dialog v-model="importDialog" title="Excel 批量导入用户" width="640px" @closed="resetImport">
+      <el-form v-if="auth.isSuperAdmin" label-width="80px">
+        <el-form-item label="默认部门">
+          <el-select v-model="importDepartmentId" style="width:100%" placeholder="请选择未填写部门的用户归属">
+            <el-option v-for="department in auth.departments" :key="department.id" :label="department.name" :value="department.id" :disabled="!department.enabled" />
+          </el-select>
+        </el-form-item>
+      </el-form>
       <el-alert
         type="info"
         :closable="false"
@@ -157,11 +164,12 @@ const roleDialog = ref(false)
 const importDialog = ref(false)
 const roleTarget = ref<any>(null)
 const importFile = ref<File | null>(null)
+const importDepartmentId = ref<number>()
 const importErrors = ref<any[]>([])
 const importing = ref(false)
 const uploadRef = ref<any>()
 
-const form = reactive({ account: '', name: '', roleId: 0, departmentId: 0 })
+const form = reactive({ account: '', name: '', roleId: 0, departmentId: undefined as number | undefined })
 const roleForm = reactive({ roleId: 0, departmentId: 0 })
 const selectedRoleIsSuper = computed(() => roles.value.find(item => item.id === roleForm.roleId)?.code === 'super_admin')
 
@@ -191,18 +199,18 @@ function openCreate() {
   form.account = ''
   form.name = ''
   form.roleId = roles.value.find(r => r.code === 'normal')?.id || roles.value[0]?.id || 0
-  form.departmentId = auth.selectedDepartmentId || auth.departments.find(item => item.enabled)?.id || 0
+  form.departmentId = auth.departments.find(item => item.enabled && item.id === auth.selectedDepartmentId)?.id
   dialog.value = true
 }
 
 // 新建用户使用后端默认初始密码，并校验角色和部门范围。
 async function create() {
-  if (!form.account.trim() || !form.name.trim() || !form.roleId || (auth.isSuperAdmin && !form.departmentId && !selectedRoleIsSuper.value)) {
+  if (!form.account.trim() || !form.name.trim() || !form.roleId || (auth.isSuperAdmin && !form.departmentId)) {
     ElMessage.warning('请填写工号、用户名、角色和部门')
     return
   }
   try {
-    await api.post('/admin/users', form)
+    await api.post('/admin/users', form, auth.isSuperAdmin ? { headers: { 'X-Department-ID': form.departmentId } } : undefined)
     dialog.value = false
     ElMessage.success('已创建，默认密码 123456')
     await load()
@@ -264,6 +272,7 @@ async function saveRole() {
 function openImport() {
   importErrors.value = []
   importFile.value = null
+  importDepartmentId.value = auth.departments.find(item => item.enabled && item.id === auth.selectedDepartmentId)?.id
   importDialog.value = true
 }
 
@@ -299,6 +308,10 @@ async function downloadTemplate() {
 
 // 批量导入后逐行展示失败原因，成功记录由后端统一写入。
 async function submitImport() {
+  if (auth.isSuperAdmin && !importDepartmentId.value) {
+    ElMessage.warning('请选择默认部门')
+    return
+  }
   if (!importFile.value) {
     ElMessage.warning('请先选择 Excel 文件')
     return
@@ -307,7 +320,7 @@ async function submitImport() {
   try {
     const data = new FormData()
     data.append('file', importFile.value)
-    const response = await api.post('/admin/users/import', data)
+    const response = await api.post('/admin/users/import', data, auth.isSuperAdmin ? { headers: { 'X-Department-ID': importDepartmentId.value } } : undefined)
     importErrors.value = response.data.errors || []
     if (response.data.created) ElMessage.success(`成功导入 ${response.data.created} 个用户`)
     if (importErrors.value.length) {

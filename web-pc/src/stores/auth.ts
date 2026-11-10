@@ -22,7 +22,7 @@ export const useAuthStore = defineStore('auth', {
     async login(account:string,password:string){ await api.post('/auth/pc/login',{account,password}); await this.fetchMe() },
     // fetchMe 绑定用户、权限、产线、部门和品牌信息，是所有页面的权限来源。
     async fetchMe(){
-      const {data}=await api.get('/me')
+      const {data}=await api.get('/me', { params: { client: 'pc' } })
       this.user=data.user
       this.permissions=data.permissions
       this.lineIds=data.lineIds

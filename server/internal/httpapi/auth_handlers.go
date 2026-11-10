@@ -37,6 +37,10 @@ func (s *Server) pcLogin(c *gin.Context) {
 		response.Fail(c, http.StatusUnauthorized, "login_failed", "账号或密码错误", nil)
 		return
 	}
+	if !s.userCanAccessSystem(user.ID, user.Role.Code, "bearing_inspection") {
+		response.Fail(c, http.StatusForbidden, "system_forbidden", "没有首末检系统的查看权限", nil)
+		return
+	}
 	if ok, _ := s.authorizer.Can(user.ID, rbac.PermPCLogin, nil); !ok {
 		response.Fail(c, http.StatusForbidden, "forbidden", "该账号不能登录PC", nil)
 		return
@@ -56,11 +60,34 @@ func (s *Server) pdaLogin(c *gin.Context) {
 		response.Fail(c, http.StatusUnauthorized, "login_failed", "账号不存在或已停用", nil)
 		return
 	}
+	if !s.userCanAccessSystem(user.ID, user.Role.Code, "bearing_inspection") {
+		response.Fail(c, http.StatusForbidden, "system_forbidden", "没有首末检系统的查看权限", nil)
+		return
+	}
 	if ok, _ := s.authorizer.Can(user.ID, rbac.PermPDALogin, nil); !ok {
 		response.Fail(c, http.StatusForbidden, "forbidden", "该账号不能登录PDA", nil)
 		return
 	}
 	s.issueToken(c, user, auth.ClientPDA)
+}
+
+// portalLogin 只校验统一身份和账号状态。能否进入具体系统由门户与子系统分别授权。
+func (s *Server) portalLogin(c *gin.Context) {
+	var req pcLoginRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, http.StatusBadRequest, "invalid_request", "请输入账号和密码", err.Error())
+		return
+	}
+	user, err := s.findUserByAccount(strings.TrimSpace(req.Account))
+	if err != nil || !user.Enabled || user.Role.DeletedAt.Valid || !s.userDepartmentEnabled(user) {
+		response.Fail(c, http.StatusUnauthorized, "login_failed", "账号或密码错误", nil)
+		return
+	}
+	if !auth.CheckPassword(user.PasswordHash, req.Password) {
+		response.Fail(c, http.StatusUnauthorized, "login_failed", "账号或密码错误", nil)
+		return
+	}
+	s.issueToken(c, user, auth.ClientPortal)
 }
 
 // issueToken 同时写入 HttpOnly Cookie 并返回 Token，兼容浏览器和显式 Bearer 客户端。
@@ -88,6 +115,9 @@ func (s *Server) me(c *gin.Context) {
 		return
 	}
 	user := scope.User
+	if client := c.Query("client"); client != "" && !s.allowSessionClient(c, user, client) {
+		return
+	}
 	perms, _ := s.userPermissions(user)
 	lines, _ := s.authorizer.AllowedLines(user.ID, scope.DepartmentID)
 	var departments []model.Department
@@ -101,6 +131,41 @@ func (s *Server) me(c *gin.Context) {
 		"departments": departments, "selectedDepartmentId": scope.DepartmentID,
 		"brandLogoDataUrl": logo,
 	})
+}
+
+// requirePCSession 复用门户身份，同时按当前角色检查 PC 登录权限。
+func (s *Server) requirePCSession(c *gin.Context) {
+	user, err := s.currentUser(c)
+	if err != nil {
+		response.Fail(c, http.StatusUnauthorized, "unauthorized", "用户不存在或已停用", nil)
+		return
+	}
+	if s.allowSessionClient(c, user, auth.ClientPC) {
+		c.Next()
+	}
+}
+
+// allowSessionClient 不重新签发凭证，避免切换子系统覆盖同一浏览器的统一登录状态。
+func (s *Server) allowSessionClient(c *gin.Context, user *model.User, client string) bool {
+	permission, allowed, label := "", false, ""
+	switch client {
+	case auth.ClientPC:
+		if source := c.GetString("client"); source != auth.ClientPC && source != auth.ClientPortal {
+			response.Fail(c, http.StatusForbidden, "wrong_client", "当前登录方式不能访问 PC 管理端，请通过门户使用账号密码登录", nil)
+			return false
+		}
+		permission, allowed, label = rbac.PermPCLogin, user.Role.AllowPC, "PC 管理端"
+	case auth.ClientPDA:
+		permission, allowed, label = rbac.PermPDALogin, user.Role.AllowPDA, "PDA 现场端"
+	default:
+		response.Fail(c, http.StatusBadRequest, "invalid_client", "客户端类型无效", nil)
+		return false
+	}
+	if ok, err := s.authorizer.Can(user.ID, permission, nil); !allowed || err != nil || !ok {
+		response.Fail(c, http.StatusForbidden, "client_forbidden", "当前账号没有"+label+"的访问权限", nil)
+		return false
+	}
+	return true
 }
 
 func (s *Server) userDepartmentEnabled(user *model.User) bool {
@@ -129,6 +194,17 @@ func (s *Server) userPermissions(user *model.User) ([]string, error) {
 		Joins("JOIN role_permissions rp ON rp.permission_id = p.id").
 		Where("rp.role_id = ?", user.RoleID).Order("p.code").Pluck("p.code", &codes).Error
 	return codes, err
+}
+
+func (s *Server) userCanAccessSystem(userID uint64, roleCode, systemCode string) bool {
+	if roleCode == "super_admin" {
+		return true
+	}
+	var count int64
+	err := s.db.Table("portal_system_access").
+		Where("user_id = ? AND system_code = ? AND enabled = ?", userID, systemCode, true).
+		Count(&count).Error
+	return err == nil && count > 0
 }
 
 func publicUser(user *model.User) gin.H {

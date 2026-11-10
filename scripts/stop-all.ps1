@@ -1,5 +1,5 @@
 $ErrorActionPreference = "Stop"
-$ports = @(8080, 5173, 5174)
+$ports = @(8090, 8081, 5173, 5174, 5175)
 foreach ($port in $ports) {
     $connections = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
     foreach ($connection in $connections) {
@@ -12,4 +12,4 @@ $runDir = Join-Path $PSScriptRoot "..\.run"
 if (Test-Path -LiteralPath $runDir) {
     Remove-Item -LiteralPath $runDir -Recurse -Force
 }
-Write-Host "API, PC and PDA services stopped."
+Write-Host "API, QMS, portal, PC and PDA services stopped."

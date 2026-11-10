@@ -4,14 +4,17 @@
   "workspaces": [
     "web-pc",
     "web-pda",
+    "web-portal",
     "packages/shared"
   ],
   "scripts": {
     "dev:pc": "npm --workspace web-pc run dev",
     "dev:pda": "npm --workspace web-pda run dev",
+    "dev:portal": "npm --workspace web-portal run dev",
     "build:pc": "npm --workspace web-pc run build",
     "build:pda": "npm --workspace web-pda run build",
-    "build": "npm run build:pc && npm run build:pda"
+    "build:portal": "npm --workspace web-portal run build",
+    "build": "npm run build:pc && npm run build:pda && npm run build:portal"
   },
   "devDependencies": {
     "@types/node": "^22.20.3"

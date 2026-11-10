@@ -1,6 +1,10 @@
-# 轴承首末检系统 V1
+# 长江轴承统一业务平台
 
-这是一个局域网内使用的首末检、报表和登记表系统。
+这是一个局域网内使用的统一业务门户：门户负责统一身份和跨系统查看授权，首末检与 QMS 质量管理各自维护系统内部权限。
+
+## 项目位置
+
+统一平台位于 `D:\CJB‘\CJBearing`，包含门户、首末检 PC/PDA、Go API 和 QMS Go 服务。QMS 静态前端保存在项目内的 `qms-web/`，运行时不再依赖旧 Java 项目目录。
 
 ## 技术栈
 - Go 1.27、Gin、GORM
@@ -8,15 +12,19 @@
 - Vue 3、TypeScript、Vite
 - PC 端 Element Plus，PDA 端 Vant
 - 自研 RBAC、JWT、Excelize、pg_dump
+- 原 Java QMS 服务的 Go 重构（ThingsBoard、历史查询、CSV/JSON 导出）
 
 ## 本地启动
 1. 复制 `server/.env.example` 为 `server/.env`，填写本机 PostgreSQL 信息。
 2. 在 `server` 目录执行 `go run ./cmd/migrate up`。
 3. 在 `server` 目录执行 `go run ./cmd/seed`。
 4. 在 `server` 目录执行 `go run ./cmd/api`。
-5. 访问 PC 端：`http://127.0.0.1:8080/pc/`。
-6. 访问 PDA 端：`http://127.0.0.1:8080/pda/`。
-7. 默认管理员：账号 `admin`，密码 `1234`。
+5. 同时启动 QMS Go 服务：在 `server` 目录执行 `go run ./cmd/qms`。
+6. 访问统一门户：`http://127.0.0.1:8090/portal/`。
+7. PC 端：`http://127.0.0.1:8090/pc/`。
+8. PDA 端：`http://127.0.0.1:8090/pda/`。
+9. QMS：`http://127.0.0.1:8081/`。
+10. 默认管理员：账号 `admin`，密码 `1234`。
 
 也可以在根目录执行：
 - `powershell -ExecutionPolicy Bypass -File scripts\migrate.ps1 up`
@@ -24,6 +32,8 @@
 - `powershell -ExecutionPolicy Bypass -File scripts\dev.ps1`
 
 开发前端时，可在根目录执行 `npm.cmd install`，然后分别运行 `npm.cmd run dev:pc` 和 `npm.cmd run dev:pda`。
+
+开发和调试时推荐运行 `cmd/dev`。固定端口如下：门户 `5175`、PC `5173`、PDA `5174`、API `8090`、QMS `8081`。端口被占用时启动会直接报错，不会自动切换端口。
 
 ## 注意
 - 数据库密码、JWT 密钥只放在未跟踪的 `.env` 中。
@@ -42,3 +52,4 @@
 
 - [系统架构说明](docs/ARCHITECTURE.md)
 - [操作手册](docs/OPERATION_MANUAL.md)
+- [统一门户与扩展接入](docs/UNIFIED_PORTAL.md)

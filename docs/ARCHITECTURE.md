@@ -49,8 +49,8 @@ flowchart LR
 
 ~~~mermaid
 flowchart TB
-    BrowserPC[PC 浏览器] -->|http://服务器:8080/pc/| HTTP[Go HTTP 服务]
-    BrowserPDA[PDA 浏览器] -->|http://服务器:8080/pda/| HTTP
+    BrowserPC[PC 浏览器] -->|http://服务器:8090/pc/| HTTP[Go HTTP 服务]
+    BrowserPDA[PDA 浏览器] -->|http://服务器:8090/pda/| HTTP
     HTTP --> API[Go API / Gin]
     API --> PG[(PostgreSQL)]
     API --> FS[(backups 目录)]
@@ -63,10 +63,11 @@ API 程序同时承担前端静态文件服务：web-pc/dist 挂载到 /pc，web
 
 | 环境 | 组件 | 默认地址 |
 |---|---|---|
-| 开发 | API | http://127.0.0.1:8080 |
+| 开发 | API | http://127.0.0.1:8090 |
 | 开发 | PC Vite | http://127.0.0.1:5173/pc/ |
 | 开发 | PDA Vite | http://127.0.0.1:5174/pda/ |
-| 生产/联调 | API + 静态端 | http://服务器:8080/pc/、/pda/ |
+| 开发 | 统一门户 Vite | http://127.0.0.1:5175/portal/ |
+| 生产/联调 | API + 静态端 | http://服务器:8090/pc/、/pda/ |
 | 健康检查 | API | GET /health |
 
 ## 4. 技术栈
@@ -131,7 +132,7 @@ D:\\code\\DG
 | 配置项 | 用途 |
 |---|---|
 | APP_ENV | 运行环境；生产模式下 Cookie 启用 Secure |
-| HTTP_ADDR | API 监听地址，默认 :8080 |
+| HTTP_ADDR | API 监听地址，默认 :8090 |
 | DATABASE_URL | PostgreSQL 连接串 |
 | TEST_DATABASE_URL | 测试数据库连接串 |
 | JWT_SECRET | JWT 签名密钥 |

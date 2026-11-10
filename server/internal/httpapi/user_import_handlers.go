@@ -12,6 +12,7 @@ import (
 	"bearing-inspection/internal/auth"
 	"bearing-inspection/internal/httpapi/response"
 	"bearing-inspection/internal/model"
+	"bearing-inspection/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/xuri/excelize/v2"
 	"gorm.io/gorm"
@@ -177,7 +178,7 @@ func (s *Server) importUsers(c *gin.Context) {
 			continue
 		}
 		user := model.User{Account: account, Name: name, PasswordHash: passwordHash, DepartmentID: departmentID, RoleID: role.ID, Enabled: true}
-		if err := s.db.Create(&user).Error; err != nil {
+		if err := service.CreateInspectionUser(s.db, &user, c.GetUint64("user_id")); err != nil {
 			rowErrors = append(rowErrors, userImportRowError{Row: rowNo, Account: account, Message: "创建失败：" + err.Error()})
 			continue
 		}

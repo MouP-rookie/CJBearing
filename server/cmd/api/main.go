@@ -42,13 +42,14 @@ func main() {
 	router := server.Router()
 	router.StaticFS("/pc", http.Dir("../web-pc/dist"))
 	router.StaticFS("/pda", http.Dir("../web-pda/dist"))
-	router.GET("/", func(c *gin.Context) { c.Redirect(http.StatusFound, "/pc/") })
+	router.StaticFS("/portal", http.Dir("../web-portal/dist"))
+	router.GET("/", func(c *gin.Context) { c.Redirect(http.StatusFound, "/portal/") })
 	httpServer := &http.Server{Addr: cfg.HTTPAddr, Handler: router, ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		slog.Info("server started", "addr", cfg.HTTPAddr)
 		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			if errors.Is(err, syscall.EADDRINUSE) || strings.Contains(err.Error(), "Only one usage") {
-				slog.Error("API启动失败：8080端口已被占用，请先停止已运行的API或cmd/dev进程")
+				slog.Error("API启动失败：配置的 HTTP_ADDR 端口已被占用，请检查是否已有 API 或 cmd/dev 进程运行")
 			} else {
 				slog.Error("server stopped", "error", err)
 			}

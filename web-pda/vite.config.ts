@@ -18,5 +18,5 @@ export default defineConfig({
   customLogger: logger,
   plugins: [vue()],
   resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)), '@shared': fileURLToPath(new URL('../packages/shared/src', import.meta.url)) } },
-  server: { port: 5174, proxy: { '/api': 'http://127.0.0.1:8080', '/health': 'http://127.0.0.1:8080' } }
+  server: { port: 5174, strictPort: true, proxy: { '/api': 'http://127.0.0.1:8090', '/health': 'http://127.0.0.1:8090' } }
 })

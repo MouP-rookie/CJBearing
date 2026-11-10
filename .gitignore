@@ -1,11 +1,18 @@
 node_modules/
 dist/
 .env
+.env.*
+!.env.example
 *.log
 server/bin/
 server/backups/
 server/tmp/
+server/device-aliases.json
 .server.pid
+.gocache/
+.chrome-qa/
+.edge-qa/
+*.qa.png
 .DS_Store
 
 .run/

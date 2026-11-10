@@ -26,12 +26,15 @@ const (
 	PermBackupManage        = "backup.manage"
 	PermSystemManage        = "system.manage"
 	PermDepartmentManage    = "department.manage"
+	PermQMSView             = "qms.view"
+	PermQMSHistory          = "qms.history"
+	PermQMSExport           = "qms.export"
 )
 
 type PermissionDefinition struct {
-	Code  string
-	Name  string
-	Group string
+	Code  string `json:"code"`
+	Name  string `json:"name"`
+	Group string `json:"group"`
 }
 
 var Catalog = []PermissionDefinition{
@@ -58,6 +61,9 @@ var Catalog = []PermissionDefinition{
 	{PermBackupManage, "数据库备份", "系统"},
 	{PermSystemManage, "系统设置", "系统"},
 	{PermDepartmentManage, "维护部门", "系统"},
+	{PermQMSView, "查看 QMS 质量管理", "QMS 质量管理"},
+	{PermQMSHistory, "查询 QMS 设备历史数据", "QMS 质量管理"},
+	{PermQMSExport, "导出 QMS 数据", "QMS 质量管理"},
 }
 
 func AllPermissionCodes() []string {

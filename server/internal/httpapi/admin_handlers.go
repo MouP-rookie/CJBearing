@@ -14,6 +14,7 @@ import (
 	"bearing-inspection/internal/auth"
 	"bearing-inspection/internal/httpapi/response"
 	"bearing-inspection/internal/model"
+	"bearing-inspection/internal/service"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -116,7 +117,7 @@ func (s *Server) createUser(c *gin.Context) {
 		enabled = *req.Enabled
 	}
 	user := model.User{Account: req.Account, Name: req.Name, PasswordHash: hash, RoleID: req.RoleID, DepartmentID: departmentID, Enabled: enabled}
-	if err := s.db.Create(&user).Error; err != nil {
+	if err := service.CreateInspectionUser(s.db, &user, c.GetUint64("user_id")); err != nil {
 		response.Fail(c, 409, "create_failed", "账号可能已存在", err.Error())
 		return
 	}
@@ -282,6 +283,9 @@ func (s *Server) resetUserPassword(c *gin.Context) {
 
 // listRoles 返回角色及其权限和产线范围。
 func (s *Server) listRoles(c *gin.Context) {
+	if !s.requireSuperAdmin(c) {
+		return
+	}
 	var roles []model.Role
 	if err := s.db.Order("id").Find(&roles).Error; err != nil {
 		response.Fail(c, 500, "db_error", "查询角色失败", err.Error())
@@ -343,6 +347,9 @@ type roleRequest struct {
 
 // createRole 禁止创建新的超级管理员角色，并保存权限与产线范围。
 func (s *Server) createRole(c *gin.Context) {
+	if !s.requireSuperAdmin(c) {
+		return
+	}
 	var req roleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Fail(c, 400, "invalid_request", "参数错误", err.Error())
@@ -369,6 +376,9 @@ func (s *Server) createRole(c *gin.Context) {
 
 // updateRole 系统角色不允许改变核心属性，自定义角色可更新授权。
 func (s *Server) updateRole(c *gin.Context) {
+	if !s.requireSuperAdmin(c) {
+		return
+	}
 	id, ok := parseUint64(c, "id")
 	if !ok {
 		return

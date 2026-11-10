@@ -15,18 +15,20 @@ import (
 )
 
 var adminPermissionCodes = []string{
-	rbac.PermPCLogin, rbac.PermPDALogin, rbac.PermUserManage, rbac.PermProductManage,
+	rbac.PermPCLogin, rbac.PermPDALogin, rbac.PermUserManage, rbac.PermAuditView, rbac.PermProductManage,
 	rbac.PermLineManage, rbac.PermShiftManage,
 	rbac.PermFormView, rbac.PermFormManage, rbac.PermFormPublish, rbac.PermFormRollback,
 	rbac.PermExecutionView, rbac.PermExecutionFill,
 	rbac.PermSubmissionEditOwn, rbac.PermSubmissionEditScope,
 	rbac.PermSubmissionVoidOwn, rbac.PermSubmissionVoidScope,
 	rbac.PermLogView, rbac.PermExport, rbac.PermBackupManage, rbac.PermSystemManage,
+	rbac.PermQMSView, rbac.PermQMSHistory, rbac.PermQMSExport,
 }
 
 var normalPermissionCodes = []string{
 	rbac.PermPDALogin, rbac.PermExecutionView, rbac.PermExecutionFill,
 	rbac.PermSubmissionEditOwn, rbac.PermSubmissionVoidOwn,
+	rbac.PermQMSView,
 }
 
 // Seed 使用事务幂等写入权限、内置角色、默认部门和管理员。
@@ -34,9 +36,16 @@ func Seed(db *gorm.DB) error {
 	return db.Transaction(func(tx *gorm.DB) error {
 		permByCode := map[string]model.Permission{}
 		for _, def := range rbac.Catalog {
-			p := model.Permission{Code: def.Code}
-			if err := tx.Where("code = ?", def.Code).FirstOrCreate(&p, model.Permission{Code: def.Code, Name: def.Name, Group: def.Group}).Error; err != nil {
-				return err
+			var p model.Permission
+			result := tx.Where("code = ?", def.Code).First(&p)
+			if result.Error != nil && result.Error != gorm.ErrRecordNotFound {
+				return result.Error
+			}
+			if result.RowsAffected == 0 {
+				p = model.Permission{Code: def.Code, Name: def.Name, Group: def.Group}
+				if err := tx.Create(&p).Error; err != nil {
+					return err
+				}
 			}
 			p.Name, p.Group = def.Name, def.Group
 			if err := tx.Save(&p).Error; err != nil {
@@ -50,11 +59,14 @@ func Seed(db *gorm.DB) error {
 			{Code: "normal", Name: "普通用户", IsSystem: true, AllowPC: false, AllowPDA: true},
 		}
 		roleByCode := map[string]model.Role{}
+		createdRoles := map[string]bool{}
 		for _, spec := range roles {
 			role := model.Role{Code: spec.Code}
-			if err := tx.Where("code = ?", spec.Code).FirstOrCreate(&role, spec).Error; err != nil {
-				return err
+			result := tx.Where("code = ?", spec.Code).FirstOrCreate(&role, spec)
+			if result.Error != nil {
+				return result.Error
 			}
+			createdRoles[spec.Code] = result.RowsAffected > 0
 			role.Name, role.IsSystem, role.AllowPC, role.AllowPDA = spec.Name, true, spec.AllowPC, spec.AllowPDA
 			if err := tx.Save(&role).Error; err != nil {
 				return err
@@ -64,11 +76,13 @@ func Seed(db *gorm.DB) error {
 		if err := replaceRolePermissions(tx, roleByCode["super_admin"].ID, rbac.AllPermissionCodes(), permByCode); err != nil {
 			return err
 		}
-		if err := replaceRolePermissions(tx, roleByCode["admin"].ID, adminPermissionCodes, permByCode); err != nil {
-			return err
-		}
-		if err := replaceRolePermissions(tx, roleByCode["normal"].ID, normalPermissionCodes, permByCode); err != nil {
-			return err
+		// 默认权限只用于新角色，保留门户已保存的授权。
+		for code, permissions := range map[string][]string{"admin": adminPermissionCodes, "normal": normalPermissionCodes} {
+			if createdRoles[code] {
+				if err := replaceRolePermissions(tx, roleByCode[code].ID, permissions, permByCode); err != nil {
+					return err
+				}
+			}
 		}
 
 		department := model.Department{Code: "donggang"}

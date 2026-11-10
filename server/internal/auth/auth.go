@@ -12,8 +12,9 @@ import (
 )
 
 const (
-	ClientPC  = "pc"
-	ClientPDA = "pda"
+	ClientPC     = "pc"
+	ClientPDA    = "pda"
+	ClientPortal = "portal"
 )
 
 type Claims struct {
@@ -32,7 +33,7 @@ func NewService(secret string, ttl time.Duration) *Service {
 	return &Service{secret: []byte(secret), ttl: ttl}
 }
 
-// GenerateToken 签发 HS256 JWT，客户端类型会写入声明并参与后续登录隔离。
+// GenerateToken 签发统一身份 JWT，记录登录来源以区分密码登录和 PDA 工号登录。
 func (s *Service) GenerateToken(userID uint64, account, client string) (string, time.Time, error) {
 	expiresAt := time.Now().Add(s.ttl)
 	claims := Claims{

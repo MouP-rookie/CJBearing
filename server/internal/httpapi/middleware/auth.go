@@ -54,13 +54,15 @@ func Auth(svc *auth.Service) gin.HandlerFunc {
 	}
 }
 
-// RequireClient 防止 PDA Token 调用 PC 管理接口。
-func RequireClient(client string) gin.HandlerFunc {
+// RequireClient 限制凭证来源；PC 管理接口可同时接受密码登录的门户凭证。
+func RequireClient(clients ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if c.GetString("client") != client {
-			response.Fail(c, http.StatusForbidden, "wrong_client", "当前账号不能在此客户端登录", nil)
-			return
+		for _, client := range clients {
+			if c.GetString("client") == client {
+				c.Next()
+				return
+			}
 		}
-		c.Next()
+		response.Fail(c, http.StatusForbidden, "wrong_client", "当前登录方式不能访问此客户端", nil)
 	}
 }

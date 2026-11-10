@@ -8,7 +8,7 @@
         <div class="brand"><img v-if="brandLogo" :src="brandLogo" class="brand-logo-pda" alt="Logo"><div v-else class="mark"><i></i><i></i></div><div><strong>现场工作台</strong><small>{{ auth.user?.name }} · {{ auth.user?.account }}</small></div></div>
         <div class="head-actions"><button class="history-button" @click="openHistory">我的历史</button><button class="logout-button" @click="logout">退出</button></div>
       </div>
-      <button type="button" class="line-picker" @click="showLineSheet = true">
+      <button type="button" class="line-picker" aria-haspopup="dialog" :aria-expanded="showLineSheet" @click="openLinePicker">
         <span class="line-picker__copy"><small>当前产线</small><strong>{{ selectedLineName }}</strong></span>
         <span class="line-picker__switch">切换<van-icon name="arrow-down" /></span>
       </button>
@@ -17,21 +17,25 @@
     <main class="page">
       <section class="status-strip"><span class="pulse"></span><div><strong>{{ online ? '网络正常' : '网络中断' }}</strong><small>{{ online ? '可以填报和提交数据' : '已停止填写以外的业务操作' }}</small></div></section>
       <div class="section-heading"><div><p>待办任务</p><h2>{{ selectedLineName === '请选择产线' ? '先选择产线' : '选择要填写的表单' }}</h2></div><span>{{ forms.length }} 项</span></div>
-      <div v-if="forms.length" class="form-list">
+      <div v-if="formsLoading" class="task-loading" role="status"><van-loading size="20" />正在加载当前产线任务，仍可切换产线</div>
+      <div v-else-if="formsError" class="empty-state" role="alert"><strong>任务加载失败</strong><p>{{ formsError }}</p><button type="button" class="retry-button" @click="reloadForms">重试加载</button><button type="button" class="retry-button" @click="openLinePicker">切换产线</button></div>
+      <div v-else-if="forms.length" class="form-list">
         <button v-for="form in forms" :key="form.versionId" class="form-card" :disabled="!online" @click="openForm(form)"><span class="form-type">{{ kindName(form.kind) }}</span><span class="form-copy"><strong>{{ form.name }}</strong><small>版本 v{{ form.versionNo }} · 点击开始填写</small></span><van-icon name="arrow" /></button>
       </div>
       <div v-else class="empty-state"><strong>还没有可填写的表单</strong><p>请选择产线，或联系管理员发布任务。</p></div>
     </main>
 
   
-    <van-popup v-model:show="showLineSheet" position="bottom" :style="{ maxHeight: '78vh' }">
+    <van-popup v-model:show="showLineSheet" teleport="body" position="bottom" :style="{ maxHeight: '78vh' }">
       <section class="line-sheet">
         <div class="line-sheet__handle"></div>
         <header class="line-sheet__head">
           <div><small>产线选择</small><h3>选择当前工位</h3></div>
           <button type="button" class="line-sheet__close" @click="showLineSheet = false"><van-icon name="cross" /></button>
         </header>
-        <p class="line-sheet__hint">{{ lines.length }} 条可用产线，点击后立即切换</p>
+        <p class="line-sheet__hint">{{ linesLoading ? '正在刷新可用产线…' : `${lines.length} 条可用产线，点击后立即切换` }}</p>
+        <div v-if="linesError" class="line-sheet__error" role="alert">{{ linesError }}<button type="button" class="retry-button" @click="refreshLines">重新加载</button></div>
+        <p v-else-if="!linesLoading && !lines.length" class="line-sheet__hint">当前账号暂无可用产线，请联系管理员检查产线授权。</p>
         <div class="line-sheet__list">
           <button
             v-for="line in lines"
@@ -39,12 +43,11 @@
             type="button"
             class="line-option"
             :class="{ 'line-option--current': line.id === lineId }"
-            :disabled="switchingLineId !== null && switchingLineId !== undefined"
+            :aria-pressed="line.id === lineId"
             @click="selectLine(line)"
           >
             <span class="line-option__copy"><strong>{{ line.name }}</strong><small>产线编号 {{ line.code || line.id }}</small></span>
-            <span v-if="line.id === lineId" class="line-option__current"><van-icon name="success" /> 当前</span>
-            <van-loading v-else-if="switchingLineId === line.id" size="18" />
+            <span v-if="line.id === lineId" class="line-option__current"><van-loading v-if="formsLoading" size="18" /><van-icon v-else name="success" /> 当前</span>
             <van-icon v-else name="arrow" class="line-option__arrow" />
           </button>
         </div>
@@ -54,9 +57,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { showConfirmDialog, showToast } from 'vant'
+import type { Line } from '@shared'
 import { api } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 
@@ -64,54 +68,125 @@ const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
 const brandLogo = computed(() => auth.brandLogoDataUrl)
-const lines = ref<any[]>([])
+const lines = ref<Line[]>([])
 const forms = ref<any[]>([])
 const lineId = ref<number>()
 const showLineSheet = ref(false)
-const switchingLineId = ref<number | null>(null)
+const linesLoading = ref(false)
+const linesError = ref('')
+const formsLoading = ref(false)
+const formsError = ref('')
 const online = ref(navigator.onLine)
 const selectedLineName = computed(() => lines.value.find(item => item.id === lineId.value)?.name || '请选择产线')
+let lineRequestID = 0
+let formRequestID = 0
+let formController: AbortController | undefined
 function kindName(kind: string) { return { first_inspection: '首检', final_inspection: '末检', report: '报表', registration: '登记表' }[kind] || kind }
-// 优先恢复路由或本机保存的产线；只有一条末级产线时自动选择。
-async function loadLines() {
-  const { data } = await api.get('/execution/lines')
-  lines.value = data.items
-  const routeLine = Number(route.query.lineId)
-  const saved = routeLine > 0 ? routeLine : Number(localStorage.getItem(`bearing-inspection.pda-line.${auth.user?.account}`))
-  const savedLine = lines.value.find(item => item.id === saved)
-  if (savedLine) { await selectLine(savedLine); return }
-  const leaves = lines.value.filter(item => !lines.value.some(child => child.parentId === item.id))
-  if (leaves.length === 1) await selectLine(leaves[0])
+function savedLineId() {
+  try { return Number(localStorage.getItem('bearing-inspection.pda-line.' + (auth.user?.account || ''))) }
+  catch { return 0 }
 }
-// 切换产线时同步刷新该产线的可填写任务，并把选择保存到本机。
-async function selectLine(item: any) {
-  switchingLineId.value = item.id
+function resetSelection() {
+  ++formRequestID
+  formController?.abort()
+  lineId.value = undefined
+  forms.value = []
+  formsLoading.value = false
+  formsError.value = ''
+  try { localStorage.removeItem('bearing-inspection.pda-line.' + (auth.user?.account || '')) } catch {}
+}
+// 每次打开选择器都刷新授权列表，原有选择不会因为请求未完成而锁定。
+async function loadLines(restoreSelection = false) {
+  const requestID = ++lineRequestID
+  linesLoading.value = true
+  linesError.value = ''
   try {
-    const { data } = await api.get('/execution/forms', { params: { lineId: item.id } })
-    lineId.value = item.id
-    showLineSheet.value = false
-    online.value = true
-    localStorage.setItem('bearing-inspection.pda-line.' + (auth.user?.account || ''), String(item.id))
-    await router.replace({ path: '/', query: { ...route.query, lineId: String(item.id) } })
-    forms.value = data.items
+    const { data } = await api.get('/execution/lines')
+    if (requestID !== lineRequestID) return
+    lines.value = data.items || []
+    if (lineId.value && !lines.value.some(line => line.id === lineId.value)) resetSelection()
+    if (restoreSelection && !lineId.value) {
+      const preferred = Number(route.query.lineId) || savedLineId()
+      const saved = lines.value.find(line => line.id === preferred)
+      if (saved) selectLine(saved)
+      else {
+        const leaves = lines.value.filter(line => !lines.value.some(child => child.parentId === line.id))
+        if (leaves.length === 1) selectLine(leaves[0])
+        else showLineSheet.value = true
+      }
+    }
   } catch (error: any) {
-    showToast(error?.message || '切换产线失败，请检查网络')
+    if (requestID !== lineRequestID) return
+    linesError.value = error.message || '读取产线失败，请检查网络后重试'
+    if (restoreSelection) showLineSheet.value = true
   } finally {
-    switchingLineId.value = null
+    if (requestID === lineRequestID) linesLoading.value = false
   }
 }
+function refreshLines() { void loadLines() }
+function openLinePicker() { showLineSheet.value = true; refreshLines() }
+// 选择立即生效，任务加载使用可取消请求；旧产线的响应不能覆盖新产线。
+function selectLine(item: Line, updateRoute = true) {
+  if (!lines.value.some(line => line.id === item.id)) { showToast('产线已不可用，请重新选择'); return }
+  showLineSheet.value = false
+  if (lineId.value !== item.id || formsError.value) {
+    lineId.value = item.id
+    void loadForms(item.id)
+  }
+  try { localStorage.setItem('bearing-inspection.pda-line.' + (auth.user?.account || ''), String(item.id)) } catch {}
+  if (updateRoute && Number(route.query.lineId) !== item.id) {
+    void router.replace({ path: '/', query: { ...route.query, lineId: String(item.id) } }).catch(() => showToast('页面地址更新失败，请重试'))
+  }
+}
+async function loadForms(selectedId: number) {
+  const requestID = ++formRequestID
+  formController?.abort()
+  const controller = new AbortController()
+  formController = controller
+  forms.value = []
+  formsError.value = ''
+  formsLoading.value = true
+  try {
+    const { data } = await api.get('/execution/forms', { params: { lineId: selectedId }, signal: controller.signal })
+    if (requestID !== formRequestID || selectedId !== lineId.value) return
+    forms.value = data.items || []
+  } catch (error: any) {
+    if (controller.signal.aborted || requestID !== formRequestID || selectedId !== lineId.value) return
+    formsError.value = error.message || '读取任务失败，请检查网络后重试'
+  } finally {
+    if (requestID === formRequestID) {
+      formsLoading.value = false
+      formController = undefined
+    }
+  }
+}
+function reloadForms() { if (lineId.value) void loadForms(lineId.value) }
 function openHistory() { router.push({ path: '/history', query: lineId.value ? { lineId: String(lineId.value) } : {} }) }
-// 表单页通过 query 携带产线、模板和类型，避免再次请求任务列表。
-function openForm(form: any) { router.push({ path: `/form/${form.versionId}`, query: { lineId: String(lineId.value), lineName: selectedLineName.value, templateId: String(form.templateId || form.template_id), name: form.name, kind: form.kind } }) }
+function openForm(form: any) {
+  if (!lineId.value || formsLoading.value || !forms.value.some(item => item.versionId === form.versionId)) return
+  router.push({ path: '/form/' + form.versionId, query: { lineId: String(lineId.value), lineName: selectedLineName.value, templateId: String(form.templateId || form.template_id), name: form.name, kind: form.kind } })
+}
 async function logout() { try { await showConfirmDialog({ title: '退出登录', message: '确定要退出当前账号吗？' }); await auth.logout(); router.replace('/login') } catch {} }
-
-// 浏览器 online/offline 事件驱动页面断网提示和操作开关。
+// 浏览器返回改变产线参数时，同步工位与任务，避免恢复到旧列表。
+watch(() => route.query.lineId, value => {
+  const selected = lines.value.find(line => line.id === Number(value))
+  if (selected && selected.id !== lineId.value) selectLine(selected, false)
+})
 function updateOnline() { online.value = navigator.onLine }
-onMounted(() => { window.addEventListener('online', updateOnline); window.addEventListener('offline', updateOnline); loadLines() })
-onUnmounted(() => { window.removeEventListener('online', updateOnline); window.removeEventListener('offline', updateOnline) })
+onMounted(() => { window.addEventListener('online', updateOnline); window.addEventListener('offline', updateOnline); void loadLines(true) })
+onUnmounted(() => {
+  ++lineRequestID
+  ++formRequestID
+  formController?.abort()
+  window.removeEventListener('online', updateOnline)
+  window.removeEventListener('offline', updateOnline)
+})
 </script>
 
 <style scoped>
+.task-loading { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 28px 14px; color: #59656c; font-size: 13px; }
+.retry-button { margin: 10px 5px 0; padding: 9px 13px; border: 1px solid var(--bench-line); color: var(--bench-steel); background: #fffdf8; font-size: 13px; }
+.line-sheet__error { margin-bottom: 12px; color: #b94a48; font-size: 13px; }
 .home-page { min-height: 100vh; }
 .workspace-head { padding: 20px 16px 26px; color: #f7f3e9; background: #1b1e22; }
 .head-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
